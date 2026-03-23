@@ -1,138 +1,185 @@
-# Labwerk — Construction Site Change Detector
+<div align="center">
 
-> **One-shot construction site detection from aerial imagery using a frozen SAM2 encoder, corpus prototypes, and spatially-routed change detection.**
+# 🕵️ SamSpade
 
-The Netherlands registers ~3 700 active construction sites in its 2022 land-use database. This project detects which of those sites are **still under construction in 2024** and which **new sites have appeared** — all from freely available PDOK aerial orthophotos, without any 2024 labels.
+### *SAM2 meets a shovel. Construction sites don't stand a chance.*
 
----
+**One-shot aerial construction site detection · Netherlands · No 2024 labels needed**
 
-## The Core Insight
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.3+-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org)
+[![SAM2](https://img.shields.io/badge/SAM2-Hiera--L-0064FF?style=flat-square)](https://github.com/facebookresearch/sam2)
+[![PDOK](https://img.shields.io/badge/Data-PDOK%20orthoHR-00A550?style=flat-square)](https://service.pdok.nl)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
-Construction sites are not objects. A car looks like a car. A construction site looks like bare soil, or scaffolding, or a concrete slab, or a tower crane — whatever stage of a multi-year process is visible that day. A single prototype vector cannot capture this diversity.
-
-This project addresses that with two ideas working together:
-
-**1 — Corpus prototypes instead of a single support embedding**
-All 2022 construction site tiles are passed through the frozen SAM2 encoder. Foreground features are extracted and clustered (K-means, k=20). The 20 centroids represent the full visual vocabulary of Dutch construction sites — bare ground, machinery, formwork, partial structures — without any 2024 supervision.
-
-**2 — Spatially-routed dual-path detection**
-The 2022 land-use mask acts as a hard spatial router:
-
-```
-Preexisting sites  (was construction in 2022)
-  → score = appearance_2024                           ← change signal would suppress these
-                                                         (they look similar across years)
-New sites          (was NOT construction in 2022)
-  → score = appearance_2024 × change_2022→2024        ← needs both appearance AND change
-
-Combined = preexisting_score + new_score              ← spatially disjoint, no double-counting
-```
-
-This means a site that completed construction between 2022 and 2024 (appearance score low in 2024) is correctly suppressed, while a stable field that was never construction (change score low) is not flagged.
+</div>
 
 ---
 
-## Architecture
+## What is this?
 
-```
-                          ┌──────────────────────────────────────────┐
-                          │          SAM2 Image Encoder               │
-                          │    (Hiera-L backbone + FPN neck)          │
-                          │             FROZEN                        │
-                          └────────────┬────────────┬────────────────┘
-                                       │            │
-                              tile_2022│            │tile_2024
-                                       ▼            ▼
-                              feats_2022          feats_2024  [B, 256, H/16, W/16]
-                                       │            │
-                          ┌────────────┘            └────────────────┐
-                          │                                          │
-                          ▼                                          ▼
-               ┌─────────────────────┐                 ┌─────────────────────┐
-               │    ChangeScorer     │                 │   AppearanceScorer  │
-               │  (feature delta)    │                 │  (cosine vs K=20    │
-               │                     │                 │   corpus prototypes)│
-               └────────┬────────────┘                 └──────────┬──────────┘
-                        │  change_map                              │  appear_map
-                        │  [B,1,H_f,W_f]                          │  [B,1,H_f,W_f]
-                        └──────────────────┬───────────────────────┘
-                                           │
-                              mask_2022 (rasterised polygons)
-                                           │
-                              ┌────────────▼────────────┐
-                              │     Spatial Router       │
-                              │                          │
-                              │  preexisting =           │
-                              │    appear × mask_2022    │
-                              │                          │
-                              │  new_sites =             │
-                              │    appear × change       │
-                              │    × (1 − mask_2022)     │
-                              │                          │
-                              │  output = preexisting    │
-                              │         + new_sites      │
-                              └────────────┬─────────────┘
-                                           │
-                                    prob_map [0,1]
-                                  (GeoTIFF, EPSG:28992)
-```
+The Dutch government keeps a database of ~3 700 active construction sites from its 2022 land-use survey. **SamSpade** answers two questions from the sky, without any 2024 labels:
 
-**Trainable parameters:** `AppearanceScorer` + `ChangeScorer` (~2 M params)
-**Frozen:** SAM2 Hiera-L encoder + FPN neck (~300 M params)
-
----
-
-## Data
-
-| Source | Description |
+| Question | What we look for |
 |---|---|
-| [PDOK Luchtfoto WMS](https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0) | 8 cm orthoHR aerial photography, year-specific layers (`2022_orthoHR`, `2024_orthoHR`) |
-| `BT2022.gpkg` | 3 664 construction site polygons from the 2022 Dutch land-use survey (EPSG:28992) |
+| 🔄 **Still under construction?** | Was a site in 2022, *still looks like construction* in 2024 |
+| 🆕 **New site appeared?** | Wasn't construction in 2022, *now looks like construction* in 2024 |
 
-Tiles are downloaded automatically by `scripts/download_pdok.py`. No local imagery is required to get started.
+Imagery comes from [PDOK](https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0) — the Netherlands' free 8 cm orthophoto service.
 
-> **WMS quirks discovered during development**
-> - PDOK does **not** support the `TIME` dimension — use year-specific layer names
-> - Bounding boxes smaller than ~600 m return blank white images — the downloader enforces a 600 m minimum extent centred on each polygon
-> - `2021_ortho25` is absent from the service entirely
+---
+
+## The Problem With Construction Sites
+
+> A car looks like a car. A swimming pool looks like a swimming pool.
+> A construction site looks like **whatever stage of a 3-year process happened to be visible that day.**
+
+Bare soil. Tower cranes. Concrete formwork. Scaffolding. Rebar grids. Excavations.
+All the same class. None of them look alike.
+
+A single prototype vector (the usual one-shot approach) averages all of that into noise.
+
+**SamSpade's answer:** don't use one prototype. Build a **vocabulary** of 20.
+
+---
+
+## How It Works
+
+### Step 1 — Build a Visual Vocabulary of Construction
+
+```mermaid
+flowchart LR
+    A[("🗄️ 3 664\n2022 tiles")] --> B["❄️ Frozen\nSAM2 Encoder\nHiera-L + FPN"]
+    B --> C["📐 Feature maps\n[256, H/16, W/16]"]
+    C --> D["🎭 Mask →\nforeground\nvectors only"]
+    D --> E["🔵🟠🟢\nKMeans\nk = 20"]
+    E --> F[("💾 prototypes.pt\n20 × 256")]
+
+    style B fill:#dbeafe,stroke:#3b82f6
+    style F fill:#dcfce7,stroke:#16a34a
+```
+
+The 20 cluster centroids capture the **full visual vocabulary** of Dutch construction sites — one cluster might be bare earth, another scaffolding, another rebar. All without a single 2024 label.
+
+---
+
+### Step 2 — Score New Imagery Against the Vocabulary
+
+```mermaid
+flowchart TB
+    T22["🛰️ tile_2022"] --> ENC["❄️ SAM2 Encoder\nFROZEN"]
+    T24["🛰️ tile_2024"] --> ENC
+
+    ENC --> F22["feats_2022\n[B,256,H/16,W/16]"]
+    ENC --> F24["feats_2024\n[B,256,H/16,W/16]"]
+
+    F24 --> AS["🔍 AppearanceScorer\ncosine sim vs K=20\nprototypes"]
+    F22 & F24 --> CS["📈 ChangeScorer\nfeature delta\nencoder"]
+
+    AS --> AP["appear_map\n[B,1,H/16,W/16]"]
+    CS --> CP["change_map\n[B,1,H/16,W/16]"]
+
+    AP & CP & M22 --> RT
+
+    M22["🗺️ mask_2022\nrasterised\n2022 polygons"]
+
+    RT["🚦 Spatial Router"]
+
+    RT --> PRE["Path A\npreexisting\n= appear × mask"]
+    RT --> NEW["Path B\nnew sites\n= appear × change\n× (1 − mask)"]
+
+    PRE & NEW --> OUT["➕ prob_map\n[0, 1]\nGeoTIFF"]
+
+    style ENC fill:#dbeafe,stroke:#3b82f6
+    style RT fill:#fef9c3,stroke:#ca8a04
+    style OUT fill:#dcfce7,stroke:#16a34a
+```
+
+---
+
+### Step 3 — The Routing Logic (the clever bit)
+
+The 2022 land-use mask acts as a **hard spatial router**. Each pixel goes through exactly one path:
+
+```
+╔══════════════════════════════════════════════════════════════════╗
+║  Was this pixel construction in 2022?                            ║
+╠══════════════════════════════════════╦═══════════════════════════╣
+║  YES  →  PATH A (Preexisting)        ║  NO  →  PATH B (New)      ║
+║                                      ║                           ║
+║  score = appearance_2024             ║  score = appearance_2024  ║
+║                                      ║        × change_score     ║
+║  ✅ still looks like construction?   ║                           ║
+║     → flag it                        ║  ✅ looks like constr.    ║
+║  ✅ now looks like a building?       ║     AND changed?          ║
+║     → suppress (completed!)          ║     → flag it             ║
+║                                      ║  ✅ stable field/road?    ║
+║  ⚠️  change signal NOT used here    ║     → suppress            ║
+║     (it would be LOW for ongoing     ║                           ║
+║      sites = false negatives)        ║                           ║
+╚══════════════════════════════════════╩═══════════════════════════╝
+
+combined = PATH A + PATH B    ← spatially disjoint, no pixel counted twice
+```
 
 ---
 
 ## Pipeline
 
-```
-BT2022.gpkg
-    │
-    ▼
-scripts/download_pdok.py          # Download 2022 + 2024 orthoHR tiles for all 3 664 sites
-    │                             # → data/tiles/<site_id>/{tile_2022.tif, tile_2024.tif, mask_2022.png}
-    ▼
-scripts/build_prototypes.py       # SAM2-encode all 2022 tiles → KMeans(k=20) → prototypes.pt
-    │                             # → checkpoints/prototypes.pt
-    ▼
-scripts/train.py                  # Train AppearanceScorer + ChangeScorer
-    │                             # → checkpoints/best.pt  |  logs/ (TensorBoard)
-    ▼
-scripts/evaluate.py               # IoU / F1 / AUC on validation split
-    │
-    ▼
-scripts/score_area.py             # Produce probability GeoTIFF for any bbox
-                                  # → outputs/construction_prob_2024.tif
+```mermaid
+flowchart LR
+    GP[("📦 BT2022.gpkg\n3 664 polygons")]
+
+    subgraph dl ["① Download  ~2 hrs"]
+        DL["scripts/download_pdok.py"]
+    end
+
+    subgraph bp ["② Build Vocabulary  ~30 min"]
+        BP["scripts/build_prototypes.py\nSAM2 encode → KMeans k=20"]
+    end
+
+    subgraph tr ["③ Train  ~1 hr / GPU"]
+        TR["scripts/train.py"]
+        TB["tensorboard --logdir logs/"]
+    end
+
+    subgraph ev ["④ Evaluate"]
+        EV["scripts/evaluate.py\nIoU · F1 · AUC"]
+    end
+
+    subgraph sc ["⑤ Score any area"]
+        SC["scripts/score_area.py\n--bbox xmin,ymin,xmax,ymax"]
+    end
+
+    GP --> dl --> bp --> tr --> ev
+    tr --> sc
+    TR -.->|"live metrics"| TB
+
+    dl --> TILES[("🗂️ data/tiles/\ntile_2022.tif\ntile_2024.tif\nmask_2022.png")]
+    bp --> PT[("💾 checkpoints/\nprototypes.pt")]
+    tr --> CK[("💾 checkpoints/\nbest.pt")]
+    sc --> GEO[("🗺️ outputs/\nconstruction_prob_2024.tif")]
+
+    style dl fill:#eff6ff,stroke:#3b82f6
+    style bp fill:#f0fdf4,stroke:#16a34a
+    style tr fill:#fefce8,stroke:#ca8a04
+    style ev fill:#fdf4ff,stroke:#a855f7
+    style sc fill:#fff1f2,stroke:#e11d48
 ```
 
 ---
 
 ## Quick Start
 
-### 1 — Environment
+### Environment
 
 ```bash
-conda create -n construction python=3.11
-conda activate construction
+conda create -n samspade python=3.11
+conda activate samspade
 pip install -r requirements.txt
 ```
 
-### 2 — Download tiles
+### 1 — Download tiles
 
 ```bash
 python scripts/download_pdok.py \
@@ -142,93 +189,106 @@ python scripts/download_pdok.py \
     --out data/tiles/
 ```
 
-~3 700 sites × 2 years ≈ 2 hours on a standard connection. The script is resumable — already-downloaded tiles are skipped.
+> ⏱ ~2 hours · resumable · skips already-downloaded tiles
 
-### 3 — Build prototypes
+### 2 — Build the vocabulary
 
 ```bash
 python scripts/build_prototypes.py \
-    --tiles data/tiles/ \
-    --k 20 \
-    --out checkpoints/prototypes.pt
+    --tiles  data/tiles/ \
+    --k      20 \
+    --out    checkpoints/prototypes.pt
 ```
 
-### 4 — Train
+### 3 — Train
 
 ```bash
 python scripts/train.py --config configs/train.yaml
-```
 
-Monitor with TensorBoard:
-
-```bash
+# Watch it live
 tensorboard --logdir logs/
 ```
 
-### 5 — Score an area
+### 4 — Score any area of the Netherlands
 
 ```bash
 python scripts/score_area.py \
-    --bbox 100000,450000,150000,500000 \
-    --prototypes checkpoints/prototypes.pt \
-    --checkpoint checkpoints/best.pt \
-    --mask2022 data/raw/BT2022.gpkg \
-    --out outputs/construction_prob_2024.tif
+    --bbox        100000,450000,150000,500000 \
+    --prototypes  checkpoints/prototypes.pt \
+    --checkpoint  checkpoints/best.pt \
+    --mask2022    data/raw/BT2022.gpkg \
+    --out         outputs/construction_prob_2024.tif
 ```
 
-The output is a single-band float32 GeoTIFF (EPSG:28992) with values in [0, 1] — 1 = high probability of active construction in 2024.
+Output is a float32 GeoTIFF in **EPSG:28992** with pixel values in `[0, 1]`.
+Load it in QGIS, ArcGIS, or any raster tool.
 
 ---
 
-## Dev Server Launcher
+## Data & Sources
 
-All pipeline stages are pre-configured in `.claude/launch.json` for one-click launch from Claude Code or any compatible IDE.
+| | Source | Detail |
+|---|---|---|
+| 🛰️ **Imagery** | [PDOK Luchtfoto WMS](https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0) | 8 cm orthoHR, layers `2022_orthoHR` / `2024_orthoHR` |
+| 🗺️ **Polygons** | BT2022.gpkg | 3 664 construction sites, Dutch land-use survey, EPSG:28992 |
 
-| Server | Command |
-|---|---|
-| `download-pdok` | Downloads all WMS tiles |
-| `build-prototypes` | Builds the K=20 corpus |
-| `train` | Trains the model |
-| `evaluate` | Runs validation metrics |
-| `score-area` | Produces output GeoTIFF |
-| `tensorboard` | Training dashboard (port 6006) |
+<details>
+<summary>🔧 PDOK WMS gotchas (learned the hard way)</summary>
+
+| Gotcha | What happens | Fix |
+|---|---|---|
+| `TIME` parameter | Silently ignored — returns current year | Use year-specific layer names: `2022_orthoHR` |
+| Small bbox | Returns pure white image | Enforce **600 m minimum** extent centred on polygon |
+| `2021_ortho25` | Layer does not exist on the service | Skip 2021; use 2020 or 2022 instead |
+| `owslib.getmap` | Inconsistent behaviour on this endpoint | Use `requests.Session` directly |
+
+</details>
+
+---
+
+## Model at a Glance
+
+| Component | Role | Trainable |
+|---|---|---|
+| SAM2 Hiera-L + FPN | Image encoder — extracts rich 256-dim features | ❌ Frozen |
+| `AppearanceScorer` | Cosine similarity of 2024 features vs K=20 prototypes | ✅ |
+| `ChangeScorer` | Encodes the feature delta between 2022 and 2024 | ✅ |
+| Spatial Router | Routes each pixel through the correct detection path | — (no params) |
+
+**~2 M trainable** parameters on top of a **~300 M frozen** SAM2 backbone.
 
 ---
 
 ## Project Structure
 
 ```
-Labwerk/
-├── configs/
+SamSpade/
+├── 📁 configs/
 │   ├── base.yaml            # Shared hyperparameters
 │   ├── train.yaml           # Training overrides
 │   └── inference.yaml       # Inference overrides
-├── data/
-│   ├── pdok_downloader.py   # PDOK WMS client (requests-based)
+├── 📁 data/
+│   ├── pdok_downloader.py   # PDOK WMS client
 │   ├── dataset.py           # ConstructionChangeDataset
 │   └── transforms.py        # Augmentation pipeline
-├── models/
+├── 📁 models/
 │   ├── detector.py          # ConstructionChangeDetector (top-level)
-│   ├── appearance_scorer.py # Cosine similarity vs corpus prototypes
+│   ├── appearance_scorer.py # Cosine sim vs corpus prototypes
 │   ├── change_scorer.py     # Feature delta encoder
 │   ├── corpus_prototype.py  # KMeans prototype builder
-│   └── feature_utils.py     # Shared feature utilities
-├── losses/
-│   └── segmentation_losses.py  # BCE + Dice loss
-├── training/
-│   └── trainer.py           # Training loop with AMP + checkpointing
-├── evaluation/
-│   └── metrics.py           # IoU, F1, AUC
-├── scripts/
-│   ├── download_pdok.py
-│   ├── build_prototypes.py
-│   ├── train.py
-│   ├── evaluate.py
-│   └── score_area.py
-└── data/
-    ├── raw/
-    │   └── BT2022.gpkg      # 3 664 construction polygons
-    └── tiles/               # Downloaded tile pairs (gitignored)
+│   └── feature_utils.py     # Shared helpers
+├── 📁 losses/
+│   └── segmentation_losses.py   # BCE + Dice
+├── 📁 training/
+│   └── trainer.py           # Training loop · AMP · checkpointing
+├── 📁 evaluation/
+│   └── metrics.py           # IoU · F1 · AUC
+└── 📁 scripts/
+    ├── download_pdok.py     # ① tile downloader
+    ├── build_prototypes.py  # ② vocabulary builder
+    ├── train.py             # ③ model training
+    ├── evaluate.py          # ④ metrics
+    └── score_area.py        # ⑤ GeoTIFF output
 ```
 
 ---
@@ -236,12 +296,15 @@ Labwerk/
 ## Requirements
 
 - Python 3.11+
-- PyTorch ≥ 2.3
-- CUDA GPU recommended (SAM2 Hiera-L encoder is large)
-- ~50 GB disk for all 3 664 × 2 tiles at 8 cm orthoHR
+- PyTorch ≥ 2.3 with CUDA (SAM2 Hiera-L is large)
+- ~50 GB disk for all tile pairs at 8 cm orthoHR
 
 ---
 
-## License
+<div align="center">
 
-MIT
+*Named after Sam Spade — the detective who always finds what's hidden.*
+*Powered by SAM2 — the model that segments anything.*
+*Built for the Netherlands — where everything is always under construction.*
+
+</div>
