@@ -1,0 +1,67 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "download-pdok",
+      "runtimeExecutable": "C:\\Users\\great\\miniconda3\\envs\\construction\\python.exe",
+      "runtimeArgs": [
+        "scripts/download_pdok.py",
+        "--polygons", "data/raw/BT2022.gpkg",
+        "--years", "2022", "2024",
+        "--resolution", "8cm",
+        "--out", "data/tiles/"
+      ],
+      "port": null
+    },
+    {
+      "name": "build-prototypes",
+      "runtimeExecutable": "C:\\Users\\great\\miniconda3\\envs\\construction\\python.exe",
+      "runtimeArgs": [
+        "scripts/build_prototypes.py",
+        "--tiles", "data/tiles/",
+        "--k", "20",
+        "--out", "checkpoints/prototypes.pt"
+      ],
+      "port": null
+    },
+    {
+      "name": "train",
+      "runtimeExecutable": "C:\\Users\\great\\miniconda3\\envs\\construction\\python.exe",
+      "runtimeArgs": [
+        "scripts/train.py",
+        "--config", "configs/train.yaml"
+      ],
+      "port": null
+    },
+    {
+      "name": "evaluate",
+      "runtimeExecutable": "C:\\Users\\great\\miniconda3\\envs\\construction\\python.exe",
+      "runtimeArgs": [
+        "scripts/evaluate.py",
+        "--checkpoint", "checkpoints/best.pt",
+        "--prototypes", "checkpoints/prototypes.pt",
+        "--split", "val"
+      ],
+      "port": null
+    },
+    {
+      "name": "score-area",
+      "runtimeExecutable": "C:\\Users\\great\\miniconda3\\envs\\construction\\python.exe",
+      "runtimeArgs": [
+        "scripts/score_area.py",
+        "--bbox", "175000,445000,185000,455000",
+        "--prototypes", "checkpoints/prototypes.pt",
+        "--checkpoint", "checkpoints/best.pt",
+        "--mask2022", "data/raw/BT2022.gpkg",
+        "--out", "outputs/construction_prob_2024.tif"
+      ],
+      "port": null
+    },
+    {
+      "name": "tensorboard",
+      "runtimeExecutable": "C:\\Users\\great\\miniconda3\\envs\\construction\\Scripts\\tensorboard.exe",
+      "runtimeArgs": ["--logdir", "logs/"],
+      "port": 6006
+    }
+  ]
+}

@@ -13,7 +13,29 @@
       "Read(//c/Users/great/**)",
       "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" auth status)",
       "Bash(GH=\"/c/Program Files/GitHub CLI/gh.exe\")",
-      "Bash(\"$GH\" repo:*)"
+      "Bash(\"$GH\" repo:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(where python3:*)",
+      "Bash(where python:*)",
+      "Bash(ls /c/Users/great/AppData/Local/Programs/Python/*/python.exe)",
+      "Bash(conda run:*)",
+      "Bash(powershell -Command \"Get-Command python | Select-Object -ExpandProperty Source\")",
+      "Bash(powershell -Command '\\(Get-Command python3\\).Source')",
+      "Bash(find /c/Users/great -name python.exe -not -path */WindowsApps/*)",
+      "Bash(find /c/Users/great -name python*.exe)",
+      "Bash(powershell -Command \"Get-ChildItem -Path C:\\\\Users\\\\great -Recurse -Filter ''python.exe'' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notlike ''*WindowsApps*'' } | Select-Object FullName\")",
+      "Bash(\"C:/Users/great/miniconda3/envs/construction/python.exe\" -c \"import torch; print\\(''torch'', torch.__version__\\)\")",
+      "Bash(\"C:/Users/great/miniconda3/envs/construction/python.exe\" -c \"import rasterio; print\\(''rasterio ok''\\)\")",
+      "Bash(\"C:/Users/great/miniconda3/envs/construction/python.exe\" -c \"import geopandas; print\\(''geopandas ok''\\)\")",
+      "Bash(\"C:/Users/great/miniconda3/envs/construction/python.exe\" -c \"import sam2; print\\(''sam2 ok''\\)\")",
+      "Bash(\"C:/Users/great/miniconda3/envs/construction/python.exe\" -c \"import owslib; print\\(''owslib ok''\\)\")",
+      "Bash(\"C:/Users/great/miniconda3/envs/construction/python.exe\" -c \"import albumentations; print\\(''albumentations ok''\\)\")",
+      "Bash(\"C:/Users/great/miniconda3/envs/construction/python.exe\" -c \":*)",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''C:\\\\Users\\\\great\\\\Documents\\\\Lab\\\\Labwerk\\\\data\\\\tiles'' -Directory | Measure-Object | Select-Object -ExpandProperty Count\")",
+      "Bash(powershell -Command \"Get-Process python -ErrorAction SilentlyContinue | Select-Object Id, CPU, WorkingSet, StartTime\")",
+      "Bash(powershell -Command \"$count = \\(Get-ChildItem -Path ''C:\\\\Users\\\\great\\\\Documents\\\\Lab\\\\Labwerk\\\\data\\\\tiles'' -Directory | Measure-Object\\).Count; $total = 3664; $pct = [math]::Round\\($count / $total * 100, 1\\); Write-Output \"\"$count / $total \\($pct%\\)\"\"\")",
+      "Bash(powershell -Command \"$c = \\(Get-ChildItem ''C:\\\\Users\\\\great\\\\Documents\\\\Lab\\\\Labwerk\\\\data\\\\tiles'' -Directory\\).Count; $t = 3664; $p = [math]::Round\\($c/$t*100,1\\); $rem = $t - $c; $eta = [math]::Round\\($rem * 2 / 60, 0\\); echo \"\"$c / $t done \\($p%\\) — ~$eta min remaining\"\"\")",
+      "Bash(powershell -NoProfile -Command \"& { $c = \\(Get-ChildItem ''C:\\\\Users\\\\great\\\\Documents\\\\Lab\\\\Labwerk\\\\data\\\\tiles'' -Directory\\).Count; $t = 3664; $p = [math]::Round\\($c * 100 / $t, 1\\); $rem = $t - $c; $eta = [math]::Round\\($rem * 2 / 60, 0\\); Write-Host \"\"$c / $t done \\($p%\\) - approx $eta min remaining\"\" }\")"
     ]
   }
 }

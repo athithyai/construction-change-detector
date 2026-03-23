@@ -27,21 +27,23 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import requests
 import rasterio
 import geopandas as gpd
 from PIL import Image
 from rasterio.transform import from_bounds
 from rasterio.features import rasterize as rio_rasterize
-from owslib.wms import WebMapService
-from shapely.geometry import box
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
 WMS_URL = "https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0"
-LAYER_MAP: Dict[str, str] = {
-    "25cm": "Actueel_ortho25",
-    "8cm":  "Actueel_ortho8",
+# PDOK exposes each year as its own layer — no TIME dimension is used.
+# e.g. resolution="25cm", year=2022  →  layer "2022_ortho25"
+#      resolution="8cm",  year=2022  →  layer "2022_orthoHR"
+LAYER_SUFFIX: Dict[str, str] = {
+    "25cm": "ortho25",
+    "8cm":  "orthoHR",
 }
 
 
@@ -50,25 +52,18 @@ class PDOKDownloader:
 
     def __init__(
         self,
-        resolution: str = "25cm",
+        resolution: str = "8cm",
         crs: str = "EPSG:28992",
         request_delay: float = 0.5,
         tile_px: int = 1024,
     ) -> None:
-        if resolution not in LAYER_MAP:
-            raise ValueError(f"resolution must be one of {list(LAYER_MAP)}")
-        self.layer      = LAYER_MAP[resolution]
+        if resolution not in LAYER_SUFFIX:
+            raise ValueError(f"resolution must be one of {list(LAYER_SUFFIX)}")
+        self.suffix     = LAYER_SUFFIX[resolution]
         self.crs        = crs
         self.delay      = request_delay
         self.tile_px    = tile_px
-        self._wms: Optional[WebMapService] = None
-
-    @property
-    def wms(self) -> WebMapService:
-        if self._wms is None:
-            logger.info("Connecting to PDOK WMS …")
-            self._wms = WebMapService(WMS_URL, version="1.3.0")
-        return self._wms
+        self._session   = requests.Session()
 
     # ------------------------------------------------------------------
     # Public API
@@ -90,31 +85,32 @@ class PDOKDownloader:
         Returns:
             HxWx3 uint8 numpy array.
         """
-        time_str = f"{year}-01-01/{year}-12-31"
-        try:
-            response = self.wms.getmap(
-                layers=[self.layer],
-                srs=self.crs,
-                bbox=bbox,
-                size=(self.tile_px, self.tile_px),
-                format="image/png",
-                time=time_str,
-                transparent=False,
-            )
-            img_arr = np.array(Image.open(io.BytesIO(response.read())).convert("RGB"))
-        except Exception as exc:
-            logger.warning("WMS request failed (%s) — retrying once …", exc)
-            time.sleep(2.0)
-            response = self.wms.getmap(
-                layers=[self.layer],
-                srs=self.crs,
-                bbox=bbox,
-                size=(self.tile_px, self.tile_px),
-                format="image/png",
-                time=time_str,
-                transparent=False,
-            )
-            img_arr = np.array(Image.open(io.BytesIO(response.read())).convert("RGB"))
+        layer = f"{year}_{self.suffix}"
+        params = {
+            "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
+            "LAYERS": layer, "STYLES": "",
+            "CRS": self.crs,
+            "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+            "WIDTH": str(self.tile_px), "HEIGHT": str(self.tile_px),
+            "FORMAT": "image/png",
+        }
+        for attempt in range(2):
+            try:
+                resp = self._session.get(WMS_URL, params=params, timeout=30)
+                resp.raise_for_status()
+                img_arr = np.array(Image.open(io.BytesIO(resp.content)).convert("RGB"))
+                break
+            except Exception as exc:
+                if attempt == 0:
+                    logger.warning("WMS request failed (%s) — retrying …", exc)
+                    time.sleep(2.0)
+                else:
+                    raise
+
+        # Detect blank (no-coverage) tiles — all pixels white
+        if img_arr.min() == 255:
+            logger.debug("Blank tile for layer=%s bbox=%s — no coverage, skipping.", layer, bbox)
+            return None
 
         self._save_geotiff(img_arr, bbox, output_path)
         time.sleep(self.delay)
@@ -170,23 +166,30 @@ class PDOKDownloader:
                 continue
 
             xmin, ymin, xmax, ymax = geom.bounds
-            bbox = (
-                xmin - padding_m,
-                ymin - padding_m,
-                xmax + padding_m,
-                ymax + padding_m,
-            )
+            cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+            # PDOK WMS requires a minimum physical extent (~600 m) to return data.
+            # For small polygons, expand bbox symmetrically from centroid.
+            half = max(padding_m + (xmax - xmin) / 2,
+                       padding_m + (ymax - ymin) / 2,
+                       300.0)   # 300 m per side → 600 m minimum extent
+            bbox = (cx - half, cy - half, cx + half, cy + half)
 
             path_a = str(site_dir / f"tile_{year_a}.tif")
             path_b = str(site_dir / f"tile_{year_b}.tif")
             mask_path = str(site_dir / f"mask_{year_a}.png")
 
-            # Download tiles
+            # Download tiles — None means no WMS coverage for this bbox/year
             try:
                 if not Path(path_a).exists():
-                    self.download_tile(bbox, year_a, path_a)
+                    result_a = self.download_tile(bbox, year_a, path_a)
+                    if result_a is None:
+                        skipped += 1
+                        continue
                 if not Path(path_b).exists():
-                    self.download_tile(bbox, year_b, path_b)
+                    result_b = self.download_tile(bbox, year_b, path_b)
+                    if result_b is None:
+                        skipped += 1
+                        continue
             except Exception as exc:
                 logger.error("Failed site %s: %s", site_id, exc)
                 skipped += 1
