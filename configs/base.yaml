@@ -8,7 +8,7 @@ data:
   resolution: "25cm"         # PDOK layer: Actueel_ortho25
   crs: "EPSG:28992"          # RD New — Dutch national grid
   tile_dir: "data/tiles"
-  polygon_path: "data/raw/construction_2022.gpkg"
+  polygon_path: "data/raw/BT2022.gpkg"
   padding_m: 50.0            # metres of context padding around each polygon bbox
   min_fg_pixels: 500         # skip support masks smaller than this
   num_workers: 4
