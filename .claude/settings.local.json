@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh auth:*)",
+      "Bash(git --version)",
+      "Bash(gh --version)",
+      "Bash(where gh:*)",
+      "Bash(where git:*)",
+      "Bash(powershell -Command \"where.exe gh\")",
+      "Bash(powershell -Command \"gh auth status\")",
+      "Read(//c/Program Files/GitHub CLI/**)",
+      "Read(//c/Users/great/AppData/Local/Programs/**)",
+      "Read(//c/Users/great/**)",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" auth status)",
+      "Bash(GH=\"/c/Program Files/GitHub CLI/gh.exe\")",
+      "Bash(\"$GH\" repo:*)"
+    ]
+  }
+}

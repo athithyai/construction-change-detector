@@ -1,0 +1,30 @@
+model:
+  sam2_hf_id: "facebook/sam2.1-hiera-large"
+  k_prototypes: 20          # K-means clusters across all 2022 construction sites
+
+data:
+  image_size: 1024           # px — at 25cm/px this covers ~256m x 256m
+  overlap: 128               # px overlap between tiles during inference
+  resolution: "25cm"         # PDOK layer: Actueel_ortho25
+  crs: "EPSG:28992"          # RD New — Dutch national grid
+  tile_dir: "data/tiles"
+  polygon_path: "data/raw/construction_2022.gpkg"
+  padding_m: 50.0            # metres of context padding around each polygon bbox
+  min_fg_pixels: 500         # skip support masks smaller than this
+  num_workers: 4
+
+training:
+  batch_size: 8
+  epochs: 50
+  warmup_epochs: 3
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  amp: true
+  loss_bce_weight: 1.0
+  loss_dice_weight: 1.0
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  log_every: 50              # steps
+  checkpoint_every: 10       # epochs
+  val_split: 0.15
+  seed: 42

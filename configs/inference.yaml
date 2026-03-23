@@ -1,0 +1,12 @@
+defaults:
+  - base
+
+inference:
+  prototypes: "checkpoints/prototypes.pt"
+  checkpoint: "checkpoints/best.pt"
+  output_dir: "outputs"
+  tile_size: 1024
+  overlap: 128
+  # bbox in RD New (EPSG:28992): xmin,ymin,xmax,ymax
+  # Example: "175000,445000,185000,455000"
+  bbox: null
