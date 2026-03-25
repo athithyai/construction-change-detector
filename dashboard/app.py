@@ -565,29 +565,35 @@ async def auto_segment(req: AutoSegRequest) -> dict:
 
 
 @app.get("/api/bt2022")
-async def bt2022_geojson() -> dict:
+async def bt2022_geojson():
     """Return BT2022 construction polygons as GeoJSON (WGS84, simplified)."""
+    from fastapi.responses import Response
     gpkg = ROOT.parent / "data/raw/BT2022.gpkg"
     if not gpkg.exists():
-        return {"type": "FeatureCollection", "features": []}
+        logger.error("BT2022.gpkg not found at %s", gpkg)
+        return Response('{"type":"FeatureCollection","features":[]}',
+                        media_type="application/geo+json")
     try:
         import geopandas as gpd
         gdf = gpd.read_file(str(gpkg))
+        logger.info("BT2022: %d rows, CRS=%s", len(gdf), gdf.crs)
         if str(gdf.crs) != "EPSG:4326":
             gdf = gdf.to_crs("EPSG:4326")
-        # Simplify geometry for web transfer (1 m tolerance in degrees ≈ 0.00001)
         gdf["geometry"] = gdf.geometry.simplify(0.00005, preserve_topology=True)
         gdf = gdf[~gdf.geometry.is_empty].reset_index(drop=True)
-        # Keep only essential columns
+        # Keep only geometry + a handful of safe string columns
         keep = ["geometry"]
         for col in ["identificatie", "naam", "typegebouw", "oppervlakte"]:
             if col in gdf.columns:
+                gdf[col] = gdf[col].fillna("").astype(str)
                 keep.append(col)
-        import json
-        return json.loads(gdf[keep].to_json())
+        geojson_str = gdf[keep].to_json()
+        logger.info("BT2022 GeoJSON ready — %d features", len(gdf))
+        return Response(geojson_str, media_type="application/geo+json")
     except Exception as exc:
-        logger.warning("BT2022 load failed: %s", exc)
-        return {"type": "FeatureCollection", "features": []}
+        logger.exception("BT2022 load failed")
+        return Response('{"type":"FeatureCollection","features":[]}',
+                        media_type="application/geo+json")
 
 
 @app.get("/api/health")
