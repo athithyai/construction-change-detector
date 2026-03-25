@@ -2,271 +2,37 @@
 
 # 🕵️ SamSpade
 
-### *SAM2 meets a shovel. Barren land doesn't stand a chance.*
+**Construction-terrain analysis from aerial imagery — Netherlands**
 
-**Dense SAM2 segmentation · NDVI · Depth · CLIP — construction-terrain analysis over the Netherlands**
+Draw a bounding box. Get dense SAM2 segments with NDVI, depth, and CLIP classification for 2022 and 2024.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.3+-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.11+-EE4C2C?style=flat-square&logo=pytorch)](https://pytorch.org)
 [![SAM2](https://img.shields.io/badge/SAM2-Hiera--L-0064FF?style=flat-square)](https://github.com/facebookresearch/sam2)
 [![CLIP](https://img.shields.io/badge/CLIP-ViT--L/14-412991?style=flat-square)](https://huggingface.co/openai/clip-vit-large-patch14)
-[![PDOK](https://img.shields.io/badge/Data-PDOK%20orthoHR-00A550?style=flat-square)](https://service.pdok.nl)
+[![PDOK](https://img.shields.io/badge/Imagery-PDOK%208cm-00A550?style=flat-square)](https://service.pdok.nl)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 </div>
 
 ---
 
-## What is this?
+## What it does
 
-SamSpade identifies **barren land, exposed soil, and disturbed terrain** that looks like
-construction — purely from aerial imagery, with zero labels required.
+Draw a bounding box anywhere in the Netherlands. SamSpade:
 
-Draw a bounding box on the map, and SamSpade:
+1. Fetches **2022 and 2024 RGB + CIR** orthophotos from PDOK (free, 8 cm)
+2. Computes **NDVI** for both years — low NDVI reveals bare soil and construction
+3. Runs **Depth Anything V2** on both years — high variance reveals disturbed terrain
+4. Runs **dense SAM2 auto-segmentation** on the 2024 tile — every pixel gets a segment
+5. Classifies each segment using **CLIP + NDVI + depth roughness** into 7 terrain classes
+6. Returns an interactive map with all layers switchable, and per-segment metrics in a popup
 
-1. Fetches **2022 and 2024 RGB + CIR** tiles from [PDOK](https://service.pdok.nl)
-2. Computes **NDVI** for both years (bare soil = low NDVI)
-3. Computes **depth maps** using Depth Anything V2 (rough terrain = high variance)
-4. Runs **dense SAM2 auto-segmentation** — every pixel gets a segment
-5. Classifies every segment using **CLIP + NDVI + depth roughness**
-6. Returns a fully interactive map with colour-coded terrain polygons
-
----
-
-## Interactive Dashboard
-
-### Run it
-
-```bash
-# 1. Activate the environment
-conda activate construction
-
-# 2. Start the server
-python -m uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
-
-# 3. Open in browser
-# http://localhost:8000
-```
-
-> **First load:** SAM2 Hiera-L + CLIP ViT-L/14 + Depth Anything V2 take ~60–90 s to load.
-> The status bar shows `Models ready · cuda` when done.
-
-### Workflow
-
-```
-1.  Draw a bbox on the map
-2.  Press ▶ Analyze Area
-3.  Results appear in ~30–120 s depending on tile size
-```
-
-The analysis always covers **both 2022 and 2024** for direct comparison.
-
-### What you see
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  MAP (Leaflet)                           │  SIDEBAR              │
-│                                          │                       │
-│  Base imagery (radio):                   │  Base Imagery:        │
-│  • RGB 2022  • CIR 2022                 │  RGB 2022 | CIR 2022  │
-│  • RGB 2024  • CIR 2024                 │  RGB 2024 | CIR 2024  │
-│  • Live PDOK tile (default)              │  Live PDOK            │
-│                                          │                       │
-│  Overlay toggles:                        │  Derived Overlays:    │
-│  • NDVI 2022 / 2024 (RdYlGn)           │  NDVI 2022 | 2024     │
-│  • Depth 2022 / 2024 (inferno)          │  Depth 2022 | 2024    │
-│                                          │                       │
-│  Analysis layers:                        │  Analysis Layers:     │
-│  • All SAM segments (terrain-coloured)   │  ▪ SAM segments       │
-│  • Construction terrain only (bold)      │  ▪ Construction only  │
-│  • 2022 reference sites (orange dashed) │  ▪ 2022 reference     │
-│                                          │                       │
-│  Legend (bottom-right): terrain classes  │  Draw Area            │
-│  Gradient scale (bottom-left): NDVI/Depth│  ▶ Analyze            │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### Terrain classes
-
-| Colour | Class |
-|---|---|
-| 🔴 `#FF4500` | **likely construction terrain** |
-| 🟫 `#CD853F` | exposed soil / bare ground |
-| 🟢 `#22BB44` | vegetation |
-| 🔵 `#1E90FF` | water |
-| 🟣 `#9370DB` | roof / building |
-| ⬜ `#778899` | paved surface |
-| ⬛ `#505060` | shadow / unknown |
-
-### Segment popup (click any polygon)
-
-Each segment shows:
-- Terrain label + colour
-- Construction score (0–100 %) with visual bar
-- NDVI 2022 and NDVI 2024 mean (with vegetation/bare tag)
-- Depth mean and roughness
-- Top-3 CLIP semantic matches with scores
-- Area (px) and SAM IoU
-
-### Download results
-
-Click **⬇ Download GeoPackage** in the sidebar, or:
-
-```bash
-curl http://localhost:8000/api/download/results.gpkg -o segments_analysis.gpkg
-```
-
-Load in QGIS: `Layer → Add Vector Layer → segments_analysis.gpkg`
+The goal is to find **barren, exposed-soil, disturbed terrain** that looks like active construction.
 
 ---
 
-## How the Analysis Works
-
-### 1 — Imagery acquisition
-
-PDOK serves 8 cm orthoHR and Color-Infrared imagery.
-Both 2022 and 2024 are fetched automatically for every bbox.
-
-```
-PDOK RGB WMS  →  rgb_2022.tif,  rgb_2024.tif
-PDOK CIR WMS  →  cir_2022 arr, cir_2024 arr  (R=NIR, G=Red, B=Green)
-```
-
-> **PDOK minimum bbox:** 600 × 600 m to avoid blank tiles.
-> The server expands internally; results are clipped back to the exact drawn bbox.
-
-### 2 — NDVI
-
-```
-NDVI = (NIR − Red) / (NIR + Red)
-```
-
-| NDVI range | Terrain |
-|---|---|
-| < 0.05 | bare soil / construction |
-| 0.05–0.30 | mixed / sparse vegetation |
-| > 0.30 | healthy vegetation |
-
-Coloured with **RdYlGn** matplotlib colormap (red=bare, green=vegetation).
-
-### 3 — Depth
-
-Depth Anything V2 Small runs on each year's RGB tile → normalised `[0, 1]` depth map.
-
-Coloured with **inferno** matplotlib colormap.
-
-Per-segment **depth variance** = terrain roughness signal.
-Construction sites → disturbed ground → high variance.
-
-### 4 — Dense SAM2 segmentation
-
-`SAM2AutomaticMaskGenerator` with `points_per_side=32` runs on the **2024 RGB** tile.
-
-Key: masks are sorted **descending by area** before rasterising into a label map.
-Large masks fill first; small masks overwrite them → every pixel gets its
-**smallest enclosing segment**. Full bbox coverage guaranteed.
-
-### 5 — Per-segment classification
-
-For each SAM segment:
-
-```python
-# CLIP classify the cropped segment
-clip_sims = CLIP(segment_crop, 14_aerial_labels)
-
-# Derived signals
-ndvi_score    = clip((0.2 − mean_ndvi) / 0.5, 0, 1)   # low NDVI → high
-roughness     = clip(depth_variance / 0.025,  0, 1)   # high var → high
-clip_constr   = clip((max_constr_sim − 0.08) / 0.22, 0, 1)
-
-# Fused construction score
-construction_score = 0.40 × ndvi_score
-                   + 0.35 × roughness
-                   + 0.25 × clip_constr
-```
-
-Label assignment (priority order):
-1. `construction_score ≥ 0.60` → **likely construction terrain**
-2. CLIP water similarity > 0.22 → **water**
-3. CLIP building similarity > 0.22 → **roof / building**
-4. CLIP paved similarity > 0.22 → **paved surface**
-5. CLIP vegetation > 0.22 or NDVI > 0.35 → **vegetation**
-6. `construction_score ≥ 0.35` → **exposed soil / bare ground**
-7. Everything else → **shadow / unknown**
-
----
-
-## API
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/api/analyze-bbox` | `POST` | Main analysis — see schema below |
-| `/api/bt2022` | `GET` | BT2022 construction polygons (GeoJSON) |
-| `/api/health` | `GET` | `{"ready": bool, "device": str}` |
-| `/api/download/results.gpkg` | `GET` | Download last GeoPackage |
-
-### `POST /api/analyze-bbox`
-
-Request:
-```json
-{ "bbox_wgs84": [west, south, east, north] }
-```
-
-Response:
-```json
-{
-  "bounds":   [[south, west], [north, east]],
-  "overlays": {
-    "rgb_2022":   "data:image/png;base64,…",
-    "rgb_2024":   "data:image/png;base64,…",
-    "cir_2022":   "data:image/png;base64,…",
-    "cir_2024":   "data:image/png;base64,…",
-    "ndvi_2022":  "data:image/png;base64,…",
-    "ndvi_2024":  "data:image/png;base64,…",
-    "depth_2022": "data:image/png;base64,…",
-    "depth_2024": "data:image/png;base64,…"
-  },
-  "segments": { "type": "FeatureCollection", "features": [...] },
-  "stats": {
-    "total": 142,
-    "construction": 23,
-    "labels": { "likely construction terrain": 23, "vegetation": 61, ... }
-  }
-}
-```
-
-Each GeoJSON feature has these properties:
-
-| Property | Type | Description |
-|---|---|---|
-| `terrain_label` | string | One of 7 terrain classes |
-| `construction_score` | float | 0–1 fused construction probability |
-| `color` | hex string | Display colour |
-| `mean_ndvi_2022` | float \| null | Mean NDVI over segment, 2022 |
-| `mean_ndvi_2024` | float \| null | Mean NDVI over segment, 2024 |
-| `depth_mean` | float \| null | Mean depth (2024) |
-| `depth_roughness` | float \| null | Depth variance × 1000 |
-| `area_px` | int | Segment area in pixels |
-| `top3_clip` | list | Top-3 CLIP label + score |
-| `predicted_iou` | float | SAM2 predicted IoU |
-| `stability_score` | float | SAM2 stability score |
-
----
-
-## Models
-
-| Model | Role | VRAM |
-|---|---|---|
-| SAM2 Hiera-L | Dense auto-segmentation | ~6 GB |
-| CLIP ViT-L/14 | Per-segment semantic classification | ~1.5 GB |
-| Depth Anything V2 Small | Terrain depth + roughness | ~0.3 GB |
-
-Total: ~8 GB VRAM. Runs on a single GPU.
-CPU fallback available (much slower, ~5–10 min per bbox).
-
----
-
-## Installation
+## Quick start
 
 ```bash
 # 1. Clone
@@ -277,65 +43,365 @@ cd construction-change-detector
 conda create -n construction python=3.11
 conda activate construction
 
-# 3. Install dependencies
+# 3. Install
 pip install -r requirements.txt
+pip install fastapi uvicorn
 
-# 4. (Optional) place BT2022.gpkg reference layer
-# Put data/raw/BT2022.gpkg to see 2022 construction site overlay on the map
-
-# 5. Start
+# 4. Start the dashboard
 python -m uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
+```
+
+Open **http://localhost:8000**
+
+> Models load on first startup: SAM2 Hiera-L + CLIP ViT-L/14 + Depth Anything V2 Small.
+> Takes **60–90 seconds**. The status bar at the bottom of the sidebar shows
+> `Models ready · cuda` when done.
+
+---
+
+## Dashboard
+
+### Workflow
+
+```
+1.  Press  ✏ Draw bbox on map
+2.  Drag a rectangle over any area in the Netherlands
+3.  Press  ▶ Analyze Area
+4.  Wait ~30–120 s (tile download + SAM2 + CLIP)
+5.  All layers appear automatically
+```
+
+### Layout
+
+```
+┌──────────────────────────────────────────────────────┬──────────────────────┐
+│                                                      │  ⬡ SamSpade          │
+│                  MAP (Leaflet)                       │                      │
+│                                                      │  Base Imagery        │
+│  Switchable base imagery:                            │  RGB 2022 │ CIR 2022 │
+│  RGB 2022 / CIR 2022 / RGB 2024 / CIR 2024 / PDOK   │  RGB 2024 │ CIR 2024 │
+│                                                      │  Live PDOK           │
+│  Toggleable overlays:                                │                      │
+│  NDVI 2022/2024 (RdYlGn)                            │  Derived Overlays    │
+│  Depth 2022/2024 (inferno)                          │  NDVI 2022 │ 2024    │
+│                                                      │  Depth 2022 │ 2024   │
+│  Analysis layers:                                    │                      │
+│  • All SAM segments (terrain-coloured)               │  Analysis Layers     │
+│  • Construction terrain only (bold highlight)        │  ▪ SAM segments      │
+│  • 2022 reference sites (orange dashed)             │  ▪ Construction only  │
+│                                                      │  ▪ 2022 ref sites    │
+│  Legend: terrain classes (bottom-right)              │                      │
+│  Gradient scale: NDVI / Depth (bottom-left)          │  ✏ Draw bbox         │
+│                                                      │  ▶ Analyze           │
+│  📡 2024 RGB    🟠 2022 construction sites           │                      │
+│                                                      │  Results + stats     │
+│                                                      │  ⬇ Download GPKG     │
+└──────────────────────────────────────────────────────┴──────────────────────┘
+```
+
+### Terrain classes
+
+| Colour | Class | When assigned |
+|---|---|---|
+| 🔴 `#FF4500` | **likely construction terrain** | construction score ≥ 0.60 |
+| 🟫 `#CD853F` | exposed soil / bare ground | score 0.35–0.59, or CLIP bare-soil > 0.20 |
+| 🟢 `#22BB44` | vegetation | CLIP veg > 0.22 or NDVI > 0.35 |
+| 🔵 `#1E90FF` | water | CLIP water > 0.22 |
+| 🟣 `#9370DB` | roof / building | CLIP building > 0.22 |
+| ⬜ `#778899` | paved surface | CLIP road/parking > 0.22 |
+| ⬛ `#505060` | shadow / unknown | none of the above |
+
+### Segment popup
+
+Click any polygon to see:
+
+```
+┌─────────────────────────────────────────────┐
+│ ● likely construction terrain               │
+│ Construction score: ████████░░  82%         │
+├─────────────────────────────────────────────┤
+│ NDVI 2022    -0.08  ● bare/construction     │
+│ NDVI 2024    -0.14  ● bare/construction     │
+│ Depth mean    0.43                          │
+│ Roughness    12.4   ▲ rough                 │
+│ Area         1 840 px                       │
+│ SAM IoU        91%                          │
+├─────────────────────────────────────────────┤
+│ TOP CLIP MATCHES                            │
+│ ▶ excavation pit earthwork…   34%           │
+│ · bare soil gravel sand…      28%           │
+│ · construction site cranes…   19%           │
+└─────────────────────────────────────────────┘
+```
+
+### Download
+
+Every analysis writes `outputs/segments_analysis.gpkg`.
+Click **⬇ Download GeoPackage** in the sidebar, or:
+
+```bash
+curl http://localhost:8000/api/download/results.gpkg -o segments_analysis.gpkg
+```
+
+Load in QGIS: `Layer → Add Vector Layer → segments_analysis.gpkg`
+
+---
+
+## How it works
+
+### Imagery — PDOK WMS
+
+Both RGB and CIR (Color-Infrared) tiles are fetched live for 2022 and 2024.
+
+```
+RGB  https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0   layers: 2022_ortho25 / 2024_ortho25
+CIR  https://service.pdok.nl/hwh/luchtfotocir/wms/v1_0   layers: 2022_ortho25 / 2024_ortho25
+```
+
+> PDOK requires a minimum **600 × 600 m** bbox to return non-blank tiles.
+> The server expands the drawn bbox internally; all results are clipped back
+> to the **exact drawn area** before returning.
+
+### NDVI
+
+```
+NDVI = (NIR − Red) / (NIR + Red + ε)
+```
+
+The CIR bands map: Channel 0 = NIR, Channel 1 = Red.
+Result is in `[−1, 1]`. Rendered with **RdYlGn** (matplotlib) — red = bare soil / construction, green = vegetation.
+
+### Depth
+
+Depth Anything V2 Small runs on the RGB tile and produces a relative depth map normalised to `[0, 1]`.
+Rendered with **inferno** (matplotlib) — dark = near, bright = far.
+
+Per segment, the **depth variance** is used as a roughness signal:
+construction sites have disturbed, irregular terrain → high variance.
+
+### Dense SAM2 segmentation
+
+```python
+SAM2AutomaticMaskGenerator(
+    model    = SAM2_Hiera_L,
+    points_per_side          = 32,   # 1024 prompt points → dense coverage
+    pred_iou_thresh          = 0.70,
+    stability_score_thresh   = 0.80,
+    min_mask_region_area     = 100,
+)
+```
+
+Masks are sorted **descending by area** before being painted into a label raster.
+Large masks fill first; small masks overwrite them → every pixel ends up assigned
+to its smallest enclosing segment.
+
+### Construction score
+
+For each segment:
+
+```
+ndvi_score    = clip((0.20 − mean_ndvi_2024) / 0.50,  0, 1)
+roughness     = clip((depth_variance / 1000) / 0.025,  0, 1)
+clip_score    = clip((max_constr_clip_sim − 0.08) / 0.22, 0, 1)
+
+construction_score = 0.40 × ndvi_score
+                   + 0.35 × roughness
+                   + 0.25 × clip_score
+```
+
+CLIP construction labels (indices contributing to `clip_score`):
+
+```
+0  construction site with cranes and machinery
+1  building under construction concrete frame
+2  excavation pit earthwork foundation
+3  scaffolding on building facade
+4  demolition site rubble and debris
+5  concrete pour steel structure being built
+13 bare soil gravel sand field
+```
+
+### Terrain label assignment
+
+```
+score ≥ 0.60                          → likely construction terrain
+CLIP water   > 0.22                   → water
+CLIP building > 0.22                  → roof / building
+CLIP paved   > 0.22                   → paved surface
+CLIP veg     > 0.22 or NDVI > 0.35   → vegetation
+score ≥ 0.35 or CLIP bare > 0.20     → exposed soil / bare ground
+otherwise                             → shadow / unknown
 ```
 
 ---
 
-## Data Sources
+## API
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `POST /api/analyze-bbox` | — | Main analysis endpoint |
+| `GET  /api/bt2022` | — | BT2022 reference polygons (GeoJSON) |
+| `GET  /api/health` | — | `{"ready": bool, "device": "cuda:0"}` |
+| `GET  /api/download/results.gpkg` | — | Download last result GeoPackage |
+
+### `POST /api/analyze-bbox`
+
+**Request**
+```json
+{ "bbox_wgs84": [west, south, east, north] }
+```
+
+**Response**
+```json
+{
+  "bounds": [[south, west], [north, east]],
+  "overlays": {
+    "rgb_2022":   "data:image/png;base64,…",
+    "cir_2022":   "data:image/png;base64,…",
+    "rgb_2024":   "data:image/png;base64,…",
+    "cir_2024":   "data:image/png;base64,…",
+    "ndvi_2022":  "data:image/png;base64,…",
+    "ndvi_2024":  "data:image/png;base64,…",
+    "depth_2022": "data:image/png;base64,…",
+    "depth_2024": "data:image/png;base64,…"
+  },
+  "segments": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": { "type": "Polygon", "coordinates": [...] },
+        "properties": {
+          "terrain_label":      "likely construction terrain",
+          "construction_score": 0.82,
+          "color":              "#FF4500",
+          "mean_ndvi_2022":     -0.08,
+          "mean_ndvi_2024":     -0.14,
+          "depth_mean":         0.43,
+          "depth_roughness":    12.4,
+          "area_px":            1840,
+          "top3_clip": [
+            { "label": "excavation pit earthwork foundation", "score": 0.34 },
+            { "label": "bare soil gravel sand field",         "score": 0.28 },
+            { "label": "construction site with cranes…",      "score": 0.19 }
+          ],
+          "predicted_iou":   0.91,
+          "stability_score": 0.87
+        }
+      }
+    ]
+  },
+  "stats": {
+    "total": 142,
+    "construction": 23,
+    "labels": {
+      "likely construction terrain": 23,
+      "vegetation": 61,
+      "paved surface": 28,
+      "roof / building": 19,
+      "exposed soil / bare ground": 8,
+      "shadow / unknown": 3
+    }
+  }
+}
+```
+
+---
+
+## Models
+
+| Model | Purpose | Approx VRAM |
+|---|---|---|
+| [SAM2 Hiera-L](https://huggingface.co/facebook/sam2.1-hiera-large) | Dense auto-segmentation | ~6 GB |
+| [CLIP ViT-L/14](https://huggingface.co/openai/clip-vit-large-patch14) | Per-segment semantic classification | ~1.5 GB |
+| [Depth Anything V2 Small](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf) | Depth map → terrain roughness | ~0.3 GB |
+
+All three are downloaded automatically from HuggingFace on first run.
+Total VRAM: ~8 GB. Tested on NVIDIA RTX 5070 Laptop.
+
+CPU inference works but is much slower (~5–15 min per bbox).
+
+---
+
+## Requirements
+
+```
+Python         3.11+
+PyTorch        2.3+  (tested on 2.11 + CUDA 12.8)
+CUDA           12.x  (recommended; CPU fallback available)
+VRAM           ≥ 8 GB
+Disk           ~5 GB for model weights (auto-downloaded)
+```
+
+Key packages (see `requirements.txt` for full list):
+
+| Package | Version tested |
+|---|---|
+| torch | 2.11.0+cu128 |
+| transformers | 5.3.0 |
+| sam2 | from GitHub |
+| fastapi | 0.135.2 |
+| geopandas | 1.1.3 |
+| rasterio | 1.4.4 |
+| shapely | 2.1.2 |
+| opencv-python | 4.13.0 |
+| numpy | 2.3.5 |
+| Pillow | 12.0.0 |
+| pyproj | 3.6+ |
+
+---
+
+## Reference data
+
+`data/raw/BT2022.gpkg` — 3 664 construction-site polygons from the Dutch land-use survey (2022), EPSG:28992.
+
+When present, these are shown on the map as an orange dashed reference layer and served via `GET /api/bt2022`.
+
+---
+
+## Project structure
+
+```
+construction-change-detector/
+├── dashboard/
+│   ├── app.py              # FastAPI backend — models, analysis pipeline, API
+│   └── static/
+│       └── index.html      # Leaflet.js frontend
+├── data/
+│   ├── pdok_downloader.py  # PDOK WMS client (RGB + CIR, 8 cm / 25 cm)
+│   ├── dataset.py
+│   └── raw/
+│       └── BT2022.gpkg     # Reference construction polygons (place here)
+├── outputs/
+│   └── segments_analysis.gpkg   # Written after each analysis run
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Data sources
 
 | | Source | Detail |
 |---|---|---|
-| 🛰️ **RGB Imagery** | [PDOK Luchtfoto WMS](https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0) | 8 cm orthoHR, layers `2022_ortho25` / `2024_ortho25` |
-| 🌿 **CIR Imagery** | [PDOK CIR WMS](https://service.pdok.nl/hwh/luchtfotocir/wms/v1_0) | Color-infrared for NDVI, `{year}_ortho25` |
-| 🗺️ **Reference polygons** | BT2022.gpkg | 3 664 construction sites from Dutch land-use survey, EPSG:28992 |
+| RGB imagery | [PDOK Luchtfoto RGB WMS](https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0) | 8 cm orthoHR · layers `2022_ortho25` / `2024_ortho25` |
+| CIR imagery | [PDOK Luchtfoto CIR WMS](https://service.pdok.nl/hwh/luchtfotocir/wms/v1_0) | Color-infrared · layers `2022_ortho25` / `2024_ortho25` |
+| Reference polygons | BT2022.gpkg | Dutch CBS land-use survey, 3 664 active construction sites |
 
 <details>
-<summary>🔧 PDOK WMS gotchas</summary>
+<summary>PDOK WMS known gotchas</summary>
 
-| Gotcha | What happens | Fix |
+| Issue | Symptom | Fix |
 |---|---|---|
-| Small bbox | Returns pure-white blank tile | Enforce 600 m minimum extent centred on drawn area |
+| Small bbox | Returns pure-white blank tile | Enforce 600 × 600 m minimum; server does this automatically |
 | `TIME` parameter | Silently ignored | Use year-specific layer names: `2022_ortho25` |
-| `owslib.getmap` | Inconsistent | Use `requests.Session` directly |
-| 8 cm blank tile | Some areas only have 25 cm | Auto-fallback: try 8 cm → fall back to 25 cm |
+| `owslib` inconsistencies | Random failures | Use `requests.get` directly |
+| 8 cm blank tile | Some rural areas only have 25 cm coverage | Server auto-falls back to `25cm` resolution |
 
 </details>
 
 ---
 
-## Project Structure
-
-```
-SamSpade/
-├── 📁 dashboard/
-│   ├── app.py                 # FastAPI backend — all models + /api/analyze-bbox
-│   └── static/index.html      # Leaflet.js frontend — single draw-and-run workflow
-├── 📁 data/
-│   ├── pdok_downloader.py     # PDOK WMS client (RGB + CIR)
-│   ├── dataset.py             # Dataset utilities
-│   └── transforms.py          # Augmentation pipeline
-├── 📁 models/
-│   └── feature_utils.py       # Tiling, stitching, GeoTIFF I/O
-├── 📁 scripts/
-│   ├── download_pdok.py        # Bulk tile downloader
-│   └── score_area.py           # CLI: score a bbox → GeoTIFF output
-└── 📁 outputs/                 # segments_analysis.gpkg saved here
-```
-
----
-
 <div align="center">
-
-*Named after Sam Spade — the detective who always finds what's hidden.*
-*Powered by SAM2 — the model that segments anything.*
-*Built for the Netherlands — where everything is always under construction.*
-
+<i>Named after Sam Spade — the detective who always finds what's hidden.</i>
 </div>

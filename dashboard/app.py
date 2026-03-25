@@ -237,7 +237,7 @@ def _fetch_cir_tile(bbox_rd: tuple, year: int) -> Optional[np.ndarray]:
         "LAYERS": f"{year}_ortho25", "STYLES": "",
         "CRS": "EPSG:28992",
         "BBOX": f"{bbox_rd[0]},{bbox_rd[1]},{bbox_rd[2]},{bbox_rd[3]}",
-        "WIDTH": "512", "HEIGHT": "512",
+        "WIDTH": "1024", "HEIGHT": "1024",
         "FORMAT": "image/png",
     }
     try:
@@ -269,7 +269,27 @@ def _ndvi_to_overlay(ndvi: np.ndarray) -> str:
     from matplotlib import cm
     norm = np.clip((ndvi + 1.0) / 2.0, 0.0, 1.0)     # [−1,1] → [0,1]
     rgba = (cm.get_cmap("RdYlGn")(norm) * 255).astype(np.uint8)
-    rgba[:, :, 3] = 210                                 # semi-transparent
+    rgba[:, :, 3] = 210
+    buf = io.BytesIO()
+    Image.fromarray(rgba, "RGBA").save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _nir_to_overlay(cir_np: np.ndarray, target_hw: tuple) -> str:
+    """Extract NIR band (channel 0 of PDOK CIR) → grayscale RGBA PNG at target_hw.
+
+    High NIR = bright (dense vegetation).  Low NIR = dark (bare soil / construction).
+    """
+    import cv2
+    from matplotlib import cm
+    nir  = cir_np[:, :, 0].astype(np.float32)
+    H, W = target_hw
+    if nir.shape != (H, W):
+        nir = cv2.resize(nir, (W, H), interpolation=cv2.INTER_LINEAR)
+    mn, mx = nir.min(), nir.max()
+    norm   = (nir - mn) / (mx - mn + 1e-6)
+    rgba   = (cm.get_cmap("YlGn")(norm) * 255).astype(np.uint8)
+    rgba[:, :, 3] = 210
     buf = io.BytesIO()
     Image.fromarray(rgba, "RGBA").save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
@@ -539,24 +559,26 @@ def _run_analyze_bbox(bbox_rd: tuple) -> dict:
         logger.info("Depth: 2022=%s 2024=%s",
                     depth[2022] is not None, depth[2024] is not None)
 
-        # ── 5. Build imagery overlays ─────────────────────────────────────────
+        # ── 5. Build imagery overlays (all cover bbox_rd_exp) ────────────────
         overlays: dict[str, Optional[str]] = {}
         for year in (2022, 2024):
-            overlays[f"rgb_{year}"] = _img_to_b64(rgb[year]) if rgb[year] is not None else None
-            overlays[f"cir_{year}"] = _img_to_b64(cir[year]) if cir[year] is not None else None
-            overlays[f"ndvi_{year}"] = (
-                _ndvi_to_overlay(ndvi[year]) if ndvi[year] is not None else None
-            )
-            overlays[f"depth_{year}"] = (
-                _depth_to_overlay(depth[year]) if depth[year] is not None else None
-            )
+            overlays[f"rgb_{year}"]   = _img_to_b64(rgb[year])   if rgb[year]  is not None else None
+            overlays[f"cir_{year}"]   = _img_to_b64(cir[year])   if cir[year]  is not None else None
+            overlays[f"ndvi_{year}"]  = _ndvi_to_overlay(ndvi[year])                if ndvi[year]   is not None else None
+            overlays[f"nir_{year}"]   = _nir_to_overlay(cir[year], target_hw)       if cir[year]    is not None else None
+            overlays[f"depth_{year}"] = _depth_to_overlay(depth[year])              if depth[year]  is not None else None
 
         # ── 6. SAM2 dense auto-segment on 2024 ───────────────────────────────
         logger.info("SAM2 auto-segment 2024 (%dx%d) …", H, W)
-        masks_data   = SAM2_MASK_GEN.generate(img_2024)
+        masks_data = SAM2_MASK_GEN.generate(img_2024)
         logger.info("  %d raw masks", len(masks_data))
-        # Sort DESCENDING: large masks first, small masks overwrite → dense coverage
+        # Filter out any mask that covers > 90 % of the tile (background catch-all)
+        total_px     = H * W
+        masks_data   = [m for m in masks_data if m["area"] < 0.90 * total_px]
+        # Sort DESCENDING: large first, small masks overwrite → every pixel gets
+        # its finest (smallest) enclosing segment
         masks_sorted = sorted(masks_data, key=lambda m: m["area"], reverse=True)
+        logger.info("  %d masks after foreground filter", len(masks_sorted))
 
         # ── 7. Vectorize ──────────────────────────────────────────────────────
         gdf_wgs = _masks_to_gdf(masks_sorted, img_2024.shape,
@@ -650,14 +672,18 @@ def _run_analyze_bbox(bbox_rd: tuple) -> dict:
             LAST_GPKG = gpkg_out
             logger.info("GeoPackage → %s", gpkg_out)
 
-        west, south, east, north = _to_wgs84_bounds(original_bbox_rd)
+        # Original drawn bbox (WGS84) — used for fitBounds + segment clip
+        west,  south,  east,  north  = _to_wgs84_bounds(original_bbox_rd)
+        # Expanded tile bbox (WGS84) — used to place image overlays correctly
+        tw, ts, te, tn               = _to_wgs84_bounds(bbox_rd_exp)
         n_constr = sum(1 for f in features_json
                        if f["properties"]["terrain_label"] == "likely construction terrain")
 
         return {
-            "bounds":   [[south, west], [north, east]],  # Leaflet [[sw], [ne]]
-            "overlays": overlays,
-            "segments": {"type": "FeatureCollection", "features": features_json},
+            "bounds":      [[south, west], [north, east]],  # drawn area, for fitBounds
+            "tile_bounds": [[ts,    tw],   [tn,    te]],    # expanded tile, for image overlays
+            "overlays":    overlays,
+            "segments":    {"type": "FeatureCollection", "features": features_json},
             "stats": {
                 "total":        len(features_json),
                 "construction": n_constr,
