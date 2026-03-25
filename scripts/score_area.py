@@ -73,7 +73,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bbox",        required=True,
                    help="xmin,ymin,xmax,ymax in EPSG:28992 (RD New).")
     p.add_argument("--prototypes",  required=True)
-    p.add_argument("--checkpoint",  required=True)
+    p.add_argument("--checkpoint",  default=None,
+                   help="Trained model checkpoint. Omit for zero-shot mode.")
+    p.add_argument("--zero-shot",   action="store_true",
+                   help="Skip trained scorer — use raw SAM2 cosine similarity only.")
     p.add_argument("--mask2022",    required=True,
                    help="Path to 2022 construction polygons (.gpkg or .shp).")
     p.add_argument("--out",         default=None, help="Output GeoTIFF path (.tif).")
@@ -218,15 +221,22 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Device: %s | bbox: %s", device, bbox)
 
+    zero_shot = args.zero_shot or args.checkpoint is None
+    if zero_shot:
+        logger.info("Zero-shot mode — using raw SAM2 cosine similarity (no trained weights).")
+    elif args.checkpoint is None:
+        raise ValueError("Provide --checkpoint or use --zero-shot flag.")
+
     # --- Load model ---
     model = ConstructionChangeDetector(k_prototypes=cfg.model.k_prototypes)
     model.load_sam2(cfg.model.sam2_hf_id)
-    state = torch.load(args.checkpoint, map_location=device)
-    model.load_trainable_state_dict(state)
+    if not zero_shot:
+        state = torch.load(args.checkpoint, map_location=device)
+        model.load_trainable_state_dict(state)
     model.to(device).eval()
 
     proto_ckpt = torch.load(args.prototypes, map_location=device)
-    prototypes = proto_ckpt["prototypes"].to(device)
+    prototypes = proto_ckpt["prototypes"].to(device)   # [K, 256]
 
     transforms = get_inference_transforms(args.tile_size)
 
@@ -281,17 +291,49 @@ def main() -> None:
             ).unsqueeze(0).unsqueeze(0).to(device)          # [1,1,H,W]
 
             with torch.no_grad():
-                out = model(t_a, t_b, m_a, prototypes)
+                if zero_shot:
+                    # ── Zero-shot: direct cosine similarity against prototypes ──
+                    enc_a = model.image_encoder(t_a)["vision_features"]  # [1,C,Hf,Wf]
+                    enc_b = model.image_encoder(t_b)["vision_features"]
 
-            combined_tiles.append(
-                out["prob_map"].squeeze().cpu().numpy()
-            )
-            preexisting_tiles.append(
-                out["preexisting"].squeeze().cpu().numpy()
-            )
-            new_tiles.append(
-                out["new_sites"].squeeze().cpu().numpy()
-            )
+                    # Normalise features and prototypes to unit vectors
+                    enc_a_n = F.normalize(enc_a, dim=1)          # [1,C,Hf,Wf]
+                    enc_b_n = F.normalize(enc_b, dim=1)
+                    proto_n = F.normalize(prototypes, dim=1)      # [K,C]
+
+                    # Appearance: max cosine sim over all K prototypes [1,1,Hf,Wf]
+                    # Reshape enc_b: [1,C,Hf,Wf] → [Hf*Wf, C]
+                    Hf, Wf = enc_b_n.shape[2:]
+                    b_flat = enc_b_n.squeeze(0).permute(1, 2, 0).reshape(-1, enc_b_n.shape[1])  # [N,C]
+                    sims   = b_flat @ proto_n.T                   # [N, K]
+                    appear = sims.max(dim=1).values.reshape(1, 1, Hf, Wf)  # [1,1,Hf,Wf]
+                    appear = (appear.clamp(-1, 1) + 1) / 2       # scale [-1,1]→[0,1]
+
+                    # Change: 1 - mean cosine sim between 2022 and 2024 per pixel
+                    a_flat  = enc_a_n.squeeze(0).permute(1, 2, 0).reshape(-1, enc_a_n.shape[1])
+                    cos_sim = (b_flat * a_flat).sum(dim=1)        # [N]
+                    change  = (1 - cos_sim.clamp(-1, 1)).reshape(1, 1, Hf, Wf) / 2  # [0,1]
+
+                    # Upsample back to tile size
+                    appear = F.interpolate(appear, size=(t_b.shape[2], t_b.shape[3]), mode="bilinear", align_corners=False)
+                    change = F.interpolate(change, size=(t_b.shape[2], t_b.shape[3]), mode="bilinear", align_corners=False)
+
+                    # Routing via 2022 mask (same logic as trained detector)
+                    preexisting = appear * m_a
+                    new_sites   = appear * change * (1 - m_a)
+                    prob_map    = (preexisting + new_sites).clamp(0, 1)
+
+                    out = {
+                        "prob_map":    prob_map,
+                        "preexisting": preexisting,
+                        "new_sites":   new_sites,
+                    }
+                else:
+                    out = model(t_a, t_b, m_a, prototypes)
+
+            combined_tiles.append(out["prob_map"].squeeze().cpu().numpy())
+            preexisting_tiles.append(out["preexisting"].squeeze().cpu().numpy())
+            new_tiles.append(out["new_sites"].squeeze().cpu().numpy())
 
         # --- Stitch ---
         shape = (H, W)

@@ -45,8 +45,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tiles",   required=True,  help="Root tile directory.")
     p.add_argument("--k",       type=int, default=20, help="Number of prototype clusters.")
     p.add_argument("--out",     required=True,  help="Output path for prototypes.pt.")
-    p.add_argument("--config",  default="configs/base.yaml")
-    p.add_argument("--max-fg",  type=int, default=2000, help="Max foreground features sampled per site.")
+    p.add_argument("--config",    default="configs/base.yaml")
+    p.add_argument("--max-fg",    type=int, default=2000, help="Max foreground features sampled per site.")
+    p.add_argument("--max-sites", type=int, default=None, help="Randomly sample this many sites (useful on CPU).")
+    p.add_argument("--sam2-model", default=None, help="Override SAM2 HF model id (e.g. facebook/sam2.1-hiera-tiny).")
     return p.parse_args()
 
 
@@ -65,9 +67,18 @@ def main() -> None:
     )
     logger.info("Dataset: %d samples", len(dataset))
 
+    # Subsample sites if requested (useful on CPU)
+    if args.max_sites and args.max_sites < len(dataset):
+        import random, torch.utils.data as tud
+        indices = random.sample(range(len(dataset)), args.max_sites)
+        dataset = tud.Subset(dataset, indices)
+        logger.info("Subsampled to %d sites (--max-sites)", args.max_sites)
+
     # Build model and load SAM2 encoder
+    sam2_id = args.sam2_model or cfg.model.sam2_hf_id
+    logger.info("Loading SAM2: %s", sam2_id)
     model = ConstructionChangeDetector(k_prototypes=args.k)
-    model.load_sam2(cfg.model.sam2_hf_id)
+    model.load_sam2(sam2_id)
     model.to(device)
 
     # Build prototypes

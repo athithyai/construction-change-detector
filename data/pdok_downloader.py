@@ -98,6 +98,12 @@ class PDOKDownloader:
             try:
                 resp = self._session.get(WMS_URL, params=params, timeout=30)
                 resp.raise_for_status()
+                ct = resp.headers.get("Content-Type", "")
+                # PDOK returns XML on error (e.g. unknown layer)
+                if "xml" in ct or resp.content[:5] == b"<?xml":
+                    snippet = resp.content[:300].decode("utf-8", errors="replace")
+                    logger.warning("PDOK returned XML for layer=%s bbox=%s: %s", layer, bbox, snippet)
+                    return None
                 img_arr = np.array(Image.open(io.BytesIO(resp.content)).convert("RGB"))
                 break
             except Exception as exc:
@@ -107,9 +113,12 @@ class PDOKDownloader:
                 else:
                     raise
 
-        # Detect blank (no-coverage) tiles — all pixels white
-        if img_arr.min() == 255:
-            logger.debug("Blank tile for layer=%s bbox=%s — no coverage, skipping.", layer, bbox)
+        # Detect blank (no-coverage) tiles — >98 % of pixels are pure white
+        white_frac = (img_arr == 255).all(axis=-1).mean()
+        logger.info("layer=%s  white_frac=%.4f  shape=%s", layer, white_frac, img_arr.shape)
+        if white_frac > 0.98:
+            logger.warning("Blank tile (%.0f%% white) for layer=%s bbox=%s — skipping.",
+                           white_frac * 100, layer, bbox)
             return None
 
         self._save_geotiff(img_arr, bbox, output_path)

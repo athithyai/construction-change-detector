@@ -65,8 +65,10 @@ class ConstructionChangeDetector(nn.Module):
         """
         from sam2.build_sam import build_sam2_hf  # type: ignore
 
-        logger.info("Loading SAM2 encoder from HuggingFace: %s …", hf_id)
-        sam2 = build_sam2_hf(hf_id)
+        device = next(self.parameters()).device if len(list(self.parameters())) > 0 else torch.device("cpu")
+        logger.info("Loading SAM2 encoder from HuggingFace: %s (device=%s) …", hf_id, device)
+        sam2 = build_sam2_hf(hf_id, device=str(device))
+        self.sam2_model    = sam2          # full model — needed for SAM2ImagePredictor
         self.image_encoder = sam2.image_encoder
 
         # Freeze completely — only AppearanceScorer and ChangeScorer are trained
