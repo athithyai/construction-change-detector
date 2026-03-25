@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>SamSpade — Construction Detector</title>
+<title>SamSpade</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
 <style>
@@ -11,50 +11,42 @@
 :root {
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
   --accent: #58a6ff; --accent2: #3fb950; --danger: #f85149;
-  --text: #e6edf3; --muted: #8b949e; --pre: #f0883e; --new: #f85149;
+  --text: #e6edf3; --muted: #8b949e;
 }
 body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; }
 #map { flex: 1; height: 100vh; }
 #sidebar {
-  width: 340px; min-width: 340px; background: var(--surface);
+  width: 320px; min-width: 320px; background: var(--surface);
   border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto;
 }
-#sidebar header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg); }
-#sidebar header h1 { font-size: 1.25rem; font-weight: 700; color: var(--accent); }
-#sidebar header p  { font-size: .72rem; color: var(--muted); margin-top: 2px; }
+header { padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--bg); }
+header h1 { font-size: 1.2rem; font-weight: 700; color: var(--accent); }
+header p  { font-size: .70rem; color: var(--muted); margin-top: 2px; }
 
-.section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-.section-title { font-size: .68rem; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.section-title { font-size: .66rem; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
 
-.btn { width: 100%; padding: 9px 14px; border: none; border-radius: 6px; font-size: .84rem; font-weight: 600; cursor: pointer; transition: all .15s; }
+.btn { width: 100%; padding: 9px 14px; border: none; border-radius: 6px; font-size: .84rem; font-weight: 600; cursor: pointer; transition: filter .15s; }
 .btn-primary  { background: var(--accent);  color: #000; }
 .btn-primary:hover  { filter: brightness(1.15); }
-.btn-secondary { background: var(--border); color: var(--text); }
-.btn-secondary:hover { background: #40474f; }
 .btn-success  { background: var(--accent2); color: #000; }
 .btn-success:hover  { filter: brightness(1.1); }
-.btn-danger   { background: var(--danger);  color: #fff; }
 .btn:disabled { opacity: .4; cursor: not-allowed; filter: none; }
 
-/* Mode tabs */
-.mode-tabs { display: flex; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); flex-wrap: wrap; }
-.mode-tab  { flex: 1; padding: 7px 4px; font-size: .76rem; font-weight: 600; border: none; cursor: pointer; transition: background .15s; background: var(--bg); color: var(--muted); min-width: 0; white-space: nowrap; }
-.mode-tab.active { background: var(--accent); color: #000; }
-
-/* Basemap toggle */
-.bm-row { display: flex; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin-top: 8px; }
-.bm-btn { flex: 1; padding: 7px; font-size: .78rem; font-weight: 500; border: none; cursor: pointer; transition: background .15s; background: var(--bg); color: var(--muted); }
+/* Basemap row */
+.bm-row { display: flex; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+.bm-btn { flex: 1; padding: 7px; font-size: .78rem; font-weight: 500; border: none; cursor: pointer; background: var(--bg); color: var(--muted); transition: background .15s; }
 .bm-btn.active { background: var(--accent); color: #000; font-weight: 700; }
 
 .slider-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-.slider-row label { font-size: .78rem; color: var(--muted); white-space: nowrap; min-width: 44px; }
+.slider-row label { font-size: .78rem; color: var(--muted); white-space: nowrap; }
 input[type=range] { flex: 1; accent-color: var(--accent); }
 .slider-val { font-size: .78rem; font-weight: 600; color: var(--text); min-width: 36px; text-align: right; }
 
-.year-row { display: flex; gap: 8px; margin-top: 10px; }
+.year-row { display: flex; gap: 8px; margin-top: 8px; }
 .year-row > div { flex: 1; }
 .year-row label { font-size: .72rem; color: var(--muted); display: block; margin-bottom: 3px; }
-.year-row select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: .82rem; }
+.year-row select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: .82rem; }
 
 /* Run button */
 #run-btn { padding: 12px; font-size: .9rem; position: relative; }
@@ -64,23 +56,23 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 #run-btn.loading { pointer-events: none; opacity: .7; }
 
 /* Layer toggles */
-.layer-toggles { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-.ltog { padding: 5px 10px; border-radius: 20px; font-size: .75rem; font-weight: 600; border: 1px solid var(--border); cursor: pointer; background: var(--bg); color: var(--muted); transition: all .15s; }
-.ltog.active { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,.08); }
+.layer-toggles { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.ltog { padding: 5px 10px; border-radius: 20px; font-size: .74rem; font-weight: 600; border: 1px solid var(--border); cursor: pointer; background: var(--bg); color: var(--muted); transition: all .15s; }
+.ltog.active { border-color: var(--accent); color: var(--accent); background: rgba(88,166,255,.10); }
 
 /* Stats */
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
 .stat-card { background: var(--bg); border-radius: 8px; border: 1px solid var(--border); padding: 10px 12px; }
-.stat-card .val { font-size: 1.35rem; font-weight: 700; }
-.stat-card .lbl { font-size: .68rem; color: var(--muted); margin-top: 2px; }
+.stat-card .val { font-size: 1.3rem; font-weight: 700; }
+.stat-card .lbl { font-size: .66rem; color: var(--muted); margin-top: 2px; }
 .s-constr .val { color: #FF7700; }
 .s-total  .val { color: var(--accent); }
+.s-types  .val { color: #a78bfa; font-size: .95rem; }
 .s-score  .val { color: var(--accent2); }
-.s-types  .val { color: #a78bfa; font-size: 1rem; }
 
-/* Segment label list */
-#label-list { margin-top: 8px; max-height: 140px; overflow-y: auto; }
-.label-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: .75rem; }
+/* Label list */
+#label-list { margin-top: 8px; max-height: 160px; overflow-y: auto; }
+.label-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: .74rem; }
 .label-row:last-child { border-bottom: none; }
 .label-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .label-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -88,38 +80,50 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 
 /* Draw status */
 #draw-status { font-size: .74rem; color: var(--muted); margin-top: 7px; text-align: center; min-height: 18px; }
-#draw-status.active { color: var(--accent); }
 
-#status-bar { padding: 10px 16px; font-size: .74rem; color: var(--muted); border-top: 1px solid var(--border); margin-top: auto; }
+/* Status bar */
+#status-bar { padding: 10px 14px; font-size: .72rem; color: var(--muted); border-top: 1px solid var(--border); margin-top: auto; }
 #status-bar.error { color: var(--danger); }
 #status-bar.ok    { color: var(--accent2); }
 
-/* One-shot UI */
-#oneshot-section { display: none; }
-.oneshot-step { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
-.oneshot-step-title { font-size: .72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-.oneshot-step.active-step { border-color: var(--accent); }
-.oneshot-step.active-step .oneshot-step-title { color: var(--accent); }
-.oneshot-step.done-step { border-color: var(--accent2); opacity: .7; }
-#ref-preview { width: 100%; border-radius: 6px; margin-top: 8px; display: none; }
-.oneshot-badge { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: .68rem; font-weight: 700; }
-.badge-encode { background: rgba(88,166,255,.2); color: var(--accent); }
-.badge-ready  { background: rgba(63,185,80,.2); color: var(--accent2); }
-
-/* Year badge on map */
+/* Year badge */
 #year-badge {
-  position: absolute; bottom: 30px; left: 10px; z-index: 1000;
+  position: absolute; bottom: 28px; left: 10px; z-index: 1000;
   background: rgba(13,17,23,.85); border: 1px solid var(--border);
-  border-radius: 8px; padding: 6px 12px; font-size: .8rem; font-weight: 700;
+  border-radius: 8px; padding: 5px 12px; font-size: .8rem; font-weight: 700;
   color: var(--accent); pointer-events: none; backdrop-filter: blur(4px);
 }
+
+/* NDVI / Depth legend pills */
+#overlay-legend {
+  position: absolute; bottom: 28px; right: 10px; z-index: 1000;
+  display: none; gap: 6px; flex-direction: column; align-items: flex-end;
+  pointer-events: none;
+}
+.overlay-pill {
+  background: rgba(13,17,23,.85); border: 1px solid var(--border);
+  border-radius: 8px; padding: 5px 12px; font-size: .72rem; font-weight: 600;
+  backdrop-filter: blur(4px);
+}
+
+/* BT2022 toggle pill */
+#bt2022-pill {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 1000; background: rgba(13,17,23,.88); border: 1px solid #f0883e;
+  border-radius: 20px; padding: 5px 14px; font-size: .74rem; font-weight: 600;
+  color: #f0883e; cursor: pointer; backdrop-filter: blur(4px);
+  user-select: none; transition: all .15s;
+  white-space: nowrap;
+}
+#bt2022-pill:hover { background: rgba(240,136,62,.15); }
+#bt2022-pill.off { border-color: var(--border); color: var(--muted); }
 
 /* Map legend */
 .leaflet-legend {
   background: rgba(13,17,23,.9); border: 1px solid #30363d;
   border-radius: 8px; padding: 10px 12px; font-size: .72rem;
-  color: #e6edf3; min-width: 160px; backdrop-filter: blur(4px);
-  max-height: 280px; overflow-y: auto;
+  color: #e6edf3; min-width: 155px; backdrop-filter: blur(4px);
+  max-height: 300px; overflow-y: auto;
 }
 .legend-title { font-weight: 700; color: #58a6ff; margin-bottom: 6px; font-size: .74rem; }
 .legend-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
@@ -129,13 +133,17 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 </head>
 <body>
 <div id="map"></div>
-<!-- Year badge overlaid on map -->
 <div id="year-badge">📡 2024</div>
+<div id="bt2022-pill" onclick="toggleBT2022()" title="Toggle 2022 construction site reference layer">🟠 2022 construction sites</div>
+<div id="overlay-legend">
+  <div class="overlay-pill" id="ndvi-pill" style="color:#3fb950;">🟢 NDVI: green=vegetation  red=bare/construction</div>
+  <div class="overlay-pill" id="depth-pill" style="color:#f0883e;">🟠 Depth: warm=near  cool=far</div>
+</div>
 
 <div id="sidebar">
   <header>
     <h1>⬡ SamSpade</h1>
-    <p>SAM2 + CLIP zero-shot construction detector · Netherlands</p>
+    <p>SAM2 · CLIP · NDVI · Depth — zero-shot construction detector</p>
   </header>
 
   <!-- BASEMAP -->
@@ -154,79 +162,41 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
     <div style="font-size:.68rem;color:var(--muted);margin-top:3px;text-align:center" id="blend-label">Showing: 2024</div>
   </div>
 
-  <!-- MODE -->
+  <!-- YEAR + DRAW -->
   <div class="section">
-    <div class="section-title">Detection Mode</div>
-    <div class="mode-tabs">
-      <button class="mode-tab active" id="mode-seg"     onclick="setMode('seg')">📐 Auto Seg</button>
-      <button class="mode-tab"        id="mode-det"     onclick="setMode('det')">🔥 Change</button>
-      <button class="mode-tab"        id="mode-oneshot" onclick="setMode('oneshot')">🎯 One-Shot</button>
-    </div>
-    <div style="margin-top:10px">
-      <button class="btn btn-primary" id="draw-btn" onclick="handleDrawBtn()" style="background:#1f6feb;">✏ Draw Area on Map</button>
-    </div>
-    <div id="draw-status" style="margin-top:8px;font-size:.78rem;color:#f0883e;font-weight:600;">← Click above to start drawing</div>
-  </div>
-
-  <!-- ONE-SHOT UI -->
-  <div class="section" id="oneshot-section">
-    <div class="section-title">One-Shot Reference Search</div>
-    <div class="oneshot-step" id="step-encode" class="active-step">
-      <div class="oneshot-step-title">Step 1 — Encode Reference</div>
-      <div style="font-size:.74rem;color:var(--muted);margin-bottom:8px;">Draw a small area around one example site. SAM2 will encode its appearance.</div>
-      <button class="btn btn-secondary" id="draw-ref-btn" onclick="startDrawRef()" style="font-size:.8rem;padding:7px;">✏ Draw Reference Area</button>
-      <img id="ref-preview" alt="Reference thumbnail"/>
-      <div id="ref-status" style="font-size:.72rem;color:var(--muted);margin-top:6px;"></div>
-    </div>
-    <div class="oneshot-step" id="step-search">
-      <div class="oneshot-step-title">Step 2 — Search in Larger Area</div>
-      <div style="font-size:.74rem;color:var(--muted);margin-bottom:8px;">Draw a larger search bbox. SAM2 will find patches similar to the reference.</div>
-      <button class="btn btn-primary" id="draw-search-btn" onclick="startDrawSearch()" style="font-size:.8rem;padding:7px;" disabled>✏ Draw Search Area</button>
-    </div>
-    <div class="slider-row" style="margin-top:8px;">
-      <label>Similarity threshold</label>
-      <input type="range" id="oneshot-threshold" min="0.2" max="0.8" step="0.05" value="0.45"
-             oninput="document.getElementById('ost-val').textContent=parseFloat(this.value).toFixed(2)"/>
-      <span class="slider-val" id="ost-val">0.45</span>
-    </div>
-  </div>
-
-  <!-- YEAR SELECTION -->
-  <div class="section">
-    <div class="section-title">Year Settings</div>
+    <div class="section-title">Settings</div>
     <div class="year-row">
       <div>
-        <label>Reference year</label>
-        <select id="year-a"><option value="2022" selected>2022</option><option value="2023">2023</option></select>
-      </div>
-      <div>
-        <label>Detection year</label>
-        <select id="year-b" onchange="updateYearBadge()"><option value="2024" selected>2024</option><option value="2023">2023</option></select>
+        <label>Year</label>
+        <select id="year-b" onchange="updateYearBadge()">
+          <option value="2024" selected>2024</option>
+          <option value="2023">2023</option>
+          <option value="2022">2022</option>
+        </select>
       </div>
     </div>
-    <div class="slider-row" style="margin-top:10px;">
-      <label>Threshold</label>
-      <input type="range" id="threshold" min="0.1" max="0.7" step="0.05" value="0.30"
-             oninput="document.getElementById('thresh-val').textContent=parseFloat(this.value).toFixed(2)"/>
-      <span class="slider-val" id="thresh-val">0.30</span>
+    <div style="margin-top:10px;">
+      <button class="btn btn-primary" id="draw-btn" onclick="startDraw()" style="background:#1f6feb;">✏ Draw Area on Map</button>
     </div>
+    <div id="draw-status">← Draw a rectangle to start</div>
   </div>
 
   <!-- RUN -->
-  <div class="section" id="run-section">
+  <div class="section">
     <button class="btn btn-primary" id="run-btn" onclick="runAnalysis()" disabled>
       <span class="spinner"></span>
       <span id="run-label">Draw an area first</span>
     </button>
     <div class="layer-toggles" id="layer-toggles" style="display:none;">
-      <button class="ltog active" id="tog-seg"  onclick="toggleLayer('seg')">Segments</button>
-      <button class="ltog active" id="tog-heat" onclick="toggleLayer('heat')">Heatmap</button>
+      <button class="ltog active" id="tog-seg"   onclick="toggleLayer('seg')">Segments</button>
+      <button class="ltog"        id="tog-ndvi"  onclick="toggleLayer('ndvi')">NDVI</button>
+      <button class="ltog"        id="tog-depth" onclick="toggleLayer('depth')">Depth</button>
     </div>
-    <div class="slider-row" id="opacity-row" style="display:none;">
-      <label>Heatmap α</label>
-      <input type="range" id="opacity" min="0" max="1" step="0.05" value="0.6"
+    <div class="slider-row" id="overlay-opacity-row" style="display:none;margin-top:8px;">
+      <label style="font-size:.72rem;color:var(--muted);white-space:nowrap;">Overlay α</label>
+      <input type="range" id="overlay-opacity" min="0" max="1" step="0.05" value="0.55"
              oninput="setOverlayOpacity(this.value)"/>
-      <span class="slider-val" id="opacity-val">0.60</span>
+      <span class="slider-val" id="ov-val">0.55</span>
     </div>
   </div>
 
@@ -247,8 +217,8 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
         <div class="lbl">Top type</div>
       </div>
       <div class="stat-card s-score">
-        <div class="val" id="stat-score">—</div>
-        <div class="lbl">Max score</div>
+        <div class="val" id="stat-ndvi">—</div>
+        <div class="lbl">NDVI available</div>
       </div>
     </div>
     <div id="label-list"></div>
@@ -261,7 +231,7 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 <script>
-// ── CLIP labels + colors (mirrors server) ─────────────────────────────────────
+// ── Labels & colors ────────────────────────────────────────────────────────────
 const CLIP_LABELS = [
   "construction site with cranes and machinery",
   "building under construction concrete frame",
@@ -279,37 +249,33 @@ const CLIP_LABELS = [
   "bare soil gravel sand field",
 ];
 const LABEL_COLORS = [
-  "#FF3333","#FF7700","#FFD700","#FF66AA","#CC3300","#FF9944",
-  "#778899","#9999BB","#88CC88","#66AACC","#AAAACC",
-  "#44AA44","#4488FF","#CCAA66",
+  "#FF4400","#FF8C00","#FFD700","#FF1493","#FF6347","#FFA500",
+  "#808080","#B0C4DE","#90EE90","#87CEEB","#DDA0DD",
+  "#2E8B57","#4169E1","#D2B48C",
 ];
-const CONSTRUCTION_COUNT = 6;  // labels 0-5
+const CONSTRUCTION_COUNT = 6;
 
-// ── Map ─────────────────────────────────────────────────────────────────────
+// ── Map ────────────────────────────────────────────────────────────────────────
 const map = L.map('map', { center: [52.25, 5.30], zoom: 9 });
 const PDOK_WMS = 'https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0';
-const wmsOpts  = { format: 'image/jpeg', transparent: false, version: '1.3.0', maxZoom: 21, tileSize: 256 };
+const wmsOpts  = { format: 'image/jpeg', transparent: false, version: '1.3.0', maxZoom: 21 };
 const WMS_2022 = L.tileLayer.wms(PDOK_WMS, { ...wmsOpts, layers: '2022_ortho25', attribution: '© PDOK 2022' });
 const WMS_2024 = L.tileLayer.wms(PDOK_WMS, { ...wmsOpts, layers: '2024_ortho25', attribution: '© PDOK 2024' });
 const TOPO     = L.tileLayer('https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:3857/{z}/{x}/{y}.png', { attribution: '© Kadaster', maxZoom: 19 });
 WMS_2024.addTo(map);
 
-// ── Year badge ───────────────────────────────────────────────────────────────
 function updateYearBadge() {
-  const yr = document.getElementById('year-b').value;
-  document.getElementById('year-badge').textContent = `📡 ${yr}`;
+  document.getElementById('year-badge').textContent = `📡 ${document.getElementById('year-b').value}`;
 }
-
 function setBasemap(year) {
   [WMS_2022, WMS_2024, TOPO].forEach(l => map.removeLayer(l));
   document.querySelectorAll('.bm-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(year === 'topo' ? 'bm-topo' : `bm-${year}`).classList.add('active');
   const blendRow = document.getElementById('blend-row');
-  const badge    = document.getElementById('year-badge');
   if (year === 'topo') {
     TOPO.addTo(map);
     blendRow.style.display = 'none';
-    badge.textContent = '📡 Topo';
+    document.getElementById('year-badge').textContent = '📡 Topo';
   } else {
     document.getElementById('blend-slider').value = year === 2024 ? 100 : 0;
     onBlend(year === 2024 ? 100 : 0);
@@ -322,27 +288,23 @@ function onBlend(v) {
   if (!map.hasLayer(WMS_2024)) WMS_2024.addTo(map);
   WMS_2022.setOpacity(1 - t);
   WMS_2024.setOpacity(t);
-  const badge = document.getElementById('year-badge');
-  const lbl   = document.getElementById('blend-label');
-  if (t === 0)       { lbl.textContent = 'Showing: 2022'; badge.textContent = '📡 2022'; }
-  else if (t === 1)  { lbl.textContent = 'Showing: 2024'; badge.textContent = '📡 2024'; }
-  else               { lbl.textContent = `Blend ${Math.round(t*100)}% → 2024`; badge.textContent = `📡 2022↔2024`; }
+  const lbl = document.getElementById('blend-label');
+  if (t === 0)      { lbl.textContent = 'Showing: 2022'; document.getElementById('year-badge').textContent = '📡 2022'; }
+  else if (t === 1) { lbl.textContent = 'Showing: 2024'; document.getElementById('year-badge').textContent = '📡 2024'; }
+  else              { lbl.textContent = `Blend ${Math.round(t*100)}% → 2024`; document.getElementById('year-badge').textContent = '📡 2022↔2024'; }
 }
 
-// ── Leaflet legend control ────────────────────────────────────────────────────
+// ── Map legend ─────────────────────────────────────────────────────────────────
 const Legend = L.Control.extend({
   options: { position: 'bottomright' },
   onAdd() {
     const div = L.DomUtil.create('div', 'leaflet-legend');
     div.innerHTML = `
       <div class="legend-title">CLIP Labels</div>
-      <div class="legend-row"><span class="legend-dot" style="border:2px solid #f0883e;background:rgba(240,136,62,.3)"></span><span class="legend-label">🟠 Preexisting site</span></div>
-      <div class="legend-row"><span class="legend-dot" style="border:2px solid #f85149;background:rgba(248,81,73,.3)"></span><span class="legend-label">🔴 New site</span></div>
-      <div style="border-top:1px solid #30363d;margin:5px 0;"></div>
       ${CLIP_LABELS.map((lbl, i) => `
         <div class="legend-row">
-          <span class="legend-dot" style="background:${LABEL_COLORS[i]};${i < CONSTRUCTION_COUNT ? 'border:1px solid rgba(255,255,255,.4)' : ''}"></span>
-          <span class="legend-label" style="${i < CONSTRUCTION_COUNT ? 'font-weight:600' : ''}">${lbl.split(' ').slice(0,3).join(' ')}</span>
+          <span class="legend-dot" style="background:${LABEL_COLORS[i]};${i < CONSTRUCTION_COUNT ? 'box-shadow:0 0 0 1px rgba(255,255,255,.3)':''};"></span>
+          <span class="legend-label" style="${i < CONSTRUCTION_COUNT ? 'font-weight:600':'color:#8b949e'}">${lbl.split(' ').slice(0,3).join(' ')}</span>
         </div>`).join('')}
     `;
     L.DomEvent.disableClickPropagation(div);
@@ -351,193 +313,137 @@ const Legend = L.Control.extend({
 });
 new Legend().addTo(map);
 
-// ── Mode ────────────────────────────────────────────────────────────────────
-let currentMode = 'seg';
-function setMode(m) {
-  currentMode = m;
-  document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
-  document.getElementById(`mode-${m}`).classList.add('active');
-  document.getElementById('oneshot-section').style.display = m === 'oneshot' ? 'block' : 'none';
-  document.getElementById('run-section').style.display     = m === 'oneshot' ? 'none'  : 'block';
-  const labels = { seg: '▶ Auto Segment + Classify', det: '▶ Detect Changes (2022→2024)' };
-  if (m !== 'oneshot') {
-    document.getElementById('run-label').textContent = currentBbox ? labels[m] : 'Draw an area first';
-    document.getElementById('draw-btn').textContent = '✏ Draw Area on Map';
-    document.getElementById('draw-btn').onclick = handleDrawBtn;
-    if (!currentBbox) startDraw();
-  } else {
-    // One-shot mode: draw button drives step 1
-    document.getElementById('draw-btn').textContent = '✏ Draw Reference Area';
-    document.getElementById('draw-btn').onclick = startDrawRef;
+// ── BT2022 reference layer ────────────────────────────────────────────────────
+let bt2022Layer = null;
+let showBT2022  = true;
+
+async function loadBT2022() {
+  try {
+    const data = await fetch('/api/bt2022').then(r => r.json());
+    if (!data.features || !data.features.length) {
+      document.getElementById('bt2022-pill').textContent = '⚠ BT2022.gpkg not found';
+      document.getElementById('bt2022-pill').style.borderColor = 'var(--border)';
+      return;
+    }
+    bt2022Layer = L.geoJSON(data, {
+      style: {
+        color:       '#f0883e',
+        weight:      1.5,
+        fillColor:   '#f0883e',
+        fillOpacity: 0.08,
+        dashArray:   '5,4',
+      },
+      onEachFeature: (f, layer) => {
+        const p   = f.properties || {};
+        const id  = p.identificatie || '—';
+        const opp = p.oppervlakte   ? `${Number(p.oppervlakte).toLocaleString()} m²` : '—';
+        layer.bindTooltip(`🟠 2022 site<br><span style="color:#888;font-size:11px;">${id}</span>`, {
+          sticky: true, opacity: 0.9,
+        });
+        layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.30, weight: 2.5 }));
+        layer.on('mouseout',  () => layer.resetStyle());
+      }
+    });
+    if (showBT2022) bt2022Layer.addTo(map);
+    const n = data.features.length;
+    document.getElementById('bt2022-pill').textContent = `🟠 2022 sites (${n.toLocaleString()})`;
+    console.log(`BT2022: ${n} polygons loaded.`);
+  } catch(e) {
+    console.warn('BT2022 load error:', e);
+    document.getElementById('bt2022-pill').textContent = '⚠ BT2022 unavailable';
   }
 }
 
-// ── Draw ────────────────────────────────────────────────────────────────────
-const drawnItems = new L.FeatureGroup().addTo(map);
-let currentBbox = null, currentPolygon = null, drawHandler = null;
-let oneShotStep = 'encode';   // 'encode' | 'search'
-let refBbox = null;
+function toggleBT2022() {
+  showBT2022 = !showBT2022;
+  document.getElementById('bt2022-pill').classList.toggle('off', !showBT2022);
+  if (!bt2022Layer) return;
+  if (showBT2022) bt2022Layer.addTo(map);
+  else map.removeLayer(bt2022Layer);
+}
 
-function handleDrawBtn() { startDraw(); }
+// Load on startup
+loadBT2022();
+
+// ── Draw ───────────────────────────────────────────────────────────────────────
+const drawnItems = new L.FeatureGroup().addTo(map);
+let currentBbox = null, drawHandler = null;
 
 function startDraw() {
   if (drawHandler) { drawHandler.disable(); drawHandler = null; }
-  const opts = { shapeOptions: { color: '#58a6ff', weight: 2, fillOpacity: .07 } };
-  drawHandler = new L.Draw.Rectangle(map, opts);
+  drawHandler = new L.Draw.Rectangle(map, { shapeOptions: { color: '#58a6ff', weight: 2, fillOpacity: .07 } });
   drawHandler.enable();
-  setDrawStatus('🖱 Drag a rectangle on the map…', 'active');
+  document.getElementById('draw-status').textContent = '🖱 Drag a rectangle on the map…';
+  document.getElementById('draw-status').style.color = 'var(--accent)';
 }
 
-function startDrawRef() {
-  oneShotStep = 'encode';
-  if (drawHandler) { drawHandler.disable(); drawHandler = null; }
-  const opts = { shapeOptions: { color: '#58a6ff', weight: 2, fillOpacity: .10 } };
-  drawHandler = new L.Draw.Rectangle(map, opts);
-  drawHandler.enable();
-  setDrawStatus('🖱 Draw small reference area…', 'active');
-  document.getElementById('draw-btn').textContent = '🔄 Drawing reference…';
-}
-
-function startDrawSearch() {
-  oneShotStep = 'search';
-  if (drawHandler) { drawHandler.disable(); drawHandler = null; }
-  const opts = { shapeOptions: { color: '#3fb950', weight: 2.5, fillOpacity: .07 } };
-  drawHandler = new L.Draw.Rectangle(map, opts);
-  drawHandler.enable();
-  setDrawStatus('🖱 Draw large search area…', 'active');
-}
-
-function setDrawStatus(msg, cls = '') {
-  const el = document.getElementById('draw-status');
-  el.textContent = msg;
-  el.className = cls;
-}
-
-map.on(L.Draw.Event.CREATED, async e => {
+map.on(L.Draw.Event.CREATED, e => {
   drawnItems.clearLayers();
   drawnItems.addLayer(e.layer);
   drawHandler = null;
   const b = e.layer.getBounds();
-  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
-
-  if (currentMode === 'oneshot') {
-    if (oneShotStep === 'encode') {
-      refBbox = bbox;
-      setDrawStatus('⏳ Encoding reference…', '');
-      document.getElementById('draw-ref-btn').disabled = true;
-      try {
-        const year = parseInt(document.getElementById('year-b').value);
-        const data = await apiPost('/api/encode-reference', { bbox_wgs84: refBbox, year });
-        // Show thumbnail
-        const img = document.getElementById('ref-preview');
-        img.src = data.preview;
-        img.style.display = 'block';
-        document.getElementById('ref-status').textContent = '✓ Reference encoded';
-        document.getElementById('ref-status').style.color = '#3fb950';
-        document.getElementById('step-encode').style.borderColor = '#3fb950';
-        document.getElementById('step-search').style.borderColor = '#58a6ff';
-        document.getElementById('draw-search-btn').disabled = false;
-        document.getElementById('draw-btn').textContent = '✏ Draw Search Area';
-        document.getElementById('draw-btn').onclick = startDrawSearch;
-        setDrawStatus('Reference ready — now draw search area', '');
-        setStatus('Reference encoded ✓ — draw search area', 'ok');
-      } catch(err) {
-        document.getElementById('ref-status').textContent = '✗ ' + err.message;
-        document.getElementById('ref-status').style.color = '#f85149';
-        document.getElementById('draw-ref-btn').disabled = false;
-        setDrawStatus('Encode failed — try again', '');
-        setStatus('Error: ' + err.message, 'error');
-      }
-    } else {
-      // Step 2: search
-      currentBbox = bbox;
-      runOneShotSearch();
-    }
-    return;
-  }
-
-  // Standard modes
-  currentBbox = bbox;
-  currentPolygon = null;
-
-  setDrawStatus('✓ Area selected — press Run', '');
-  const labels = { seg: 'Auto Segment + Classify', det: 'Detect Changes (2022→2024)' };
-  document.getElementById('run-label').textContent = labels[currentMode];
+  currentBbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  document.getElementById('draw-status').textContent = '✓ Area selected — press Run';
+  document.getElementById('draw-status').style.color = 'var(--accent2)';
+  document.getElementById('run-label').textContent = '▶ Auto Segment + Classify';
   document.getElementById('run-btn').disabled = false;
 });
 
-// ── One-shot search ──────────────────────────────────────────────────────────
-async function runOneShotSearch() {
-  const btn = document.getElementById('draw-search-btn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Searching…';
-  if (segmentLayer) { map.removeLayer(segmentLayer); segmentLayer = null; }
-  if (heatmapLayer) { map.removeLayer(heatmapLayer); heatmapLayer = null; }
-  try {
-    setStatus('One-shot: downloading search tile → cosine similarity…');
-    const year = parseInt(document.getElementById('year-b').value);
-    const thr  = parseFloat(document.getElementById('oneshot-threshold').value);
-    const data = await apiPost('/api/one-shot-search', { bbox_wgs84: currentBbox, year, threshold: thr });
-    renderOneShot(data);
-    setStatus(`${data.stats.n_matches} matches · max similarity ${((data.stats.max_score||data.stats.max_sim||0)*100).toFixed(0)}%`, 'ok');
-  } catch(err) {
-    setStatus('Error: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '✏ Draw Search Area';
-  }
-}
-
-// ── Layers ──────────────────────────────────────────────────────────────────
-let segmentLayer = null, heatmapLayer = null;
-let showSeg = true, showHeat = true;
+// ── Layers ─────────────────────────────────────────────────────────────────────
+let segLayer = null, ndviLayer = null, depthLayer = null;
+let showSeg = true, showNdvi = false, showDepth = false;
+let overlayOpacity = 0.55;
 
 function toggleLayer(which) {
   if (which === 'seg') {
     showSeg = !showSeg;
     document.getElementById('tog-seg').classList.toggle('active', showSeg);
-    if (segmentLayer) { if (showSeg) segmentLayer.addTo(map); else map.removeLayer(segmentLayer); }
-  } else {
-    showHeat = !showHeat;
-    document.getElementById('tog-heat').classList.toggle('active', showHeat);
-    if (heatmapLayer) { if (showHeat) heatmapLayer.addTo(map); else map.removeLayer(heatmapLayer); }
+    if (segLayer) { if (showSeg) segLayer.addTo(map); else map.removeLayer(segLayer); }
+  } else if (which === 'ndvi') {
+    showNdvi = !showNdvi;
+    document.getElementById('tog-ndvi').classList.toggle('active', showNdvi);
+    if (ndviLayer) { if (showNdvi) ndviLayer.addTo(map); else map.removeLayer(ndviLayer); }
+    updateOverlayLegend();
+  } else if (which === 'depth') {
+    showDepth = !showDepth;
+    document.getElementById('tog-depth').classList.toggle('active', showDepth);
+    if (depthLayer) { if (showDepth) depthLayer.addTo(map); else map.removeLayer(depthLayer); }
+    updateOverlayLegend();
   }
 }
+
 function setOverlayOpacity(v) {
-  document.getElementById('opacity-val').textContent = parseFloat(v).toFixed(2);
-  if (heatmapLayer) heatmapLayer.setOpacity(parseFloat(v));
+  overlayOpacity = parseFloat(v);
+  document.getElementById('ov-val').textContent = overlayOpacity.toFixed(2);
+  if (ndviLayer)  ndviLayer.setOpacity(overlayOpacity);
+  if (depthLayer) depthLayer.setOpacity(overlayOpacity);
 }
 
-// ── Run ─────────────────────────────────────────────────────────────────────
+function updateOverlayLegend() {
+  const el = document.getElementById('overlay-legend');
+  const npill = document.getElementById('ndvi-pill');
+  const dpill = document.getElementById('depth-pill');
+  npill.style.display  = showNdvi  ? 'block' : 'none';
+  dpill.style.display  = showDepth ? 'block' : 'none';
+  el.style.display     = (showNdvi || showDepth) ? 'flex' : 'none';
+}
+
+// ── Run ────────────────────────────────────────────────────────────────────────
 async function runAnalysis() {
   if (!currentBbox) { setStatus('Draw an area first.', 'error'); return; }
   const btn = document.getElementById('run-btn');
   btn.classList.add('loading');
-  if (segmentLayer) { map.removeLayer(segmentLayer); segmentLayer = null; }
-  if (heatmapLayer) { map.removeLayer(heatmapLayer); heatmapLayer = null; }
-
-  const yearB = parseInt(document.getElementById('year-b').value);
-  const yearA = parseInt(document.getElementById('year-a').value);
+  // Clear old layers
+  [segLayer, ndviLayer, depthLayer].forEach(l => { if (l) map.removeLayer(l); });
+  segLayer = ndviLayer = depthLayer = null;
 
   try {
-    if (currentMode === 'seg') {
-      setStatus('Downloading tile → SAM2 auto-segment → CLIP classify…');
-      const data = await apiPost('/api/auto-segment', { bbox_wgs84: currentBbox, year: yearB });
-      renderSegments(data);
-      setStatus(`${data.stats.construction} construction / ${data.stats.total} total segments`, 'ok');
-
-    } else if (currentMode === 'det') {
-      setStatus('Fetching 2022+2024 tiles → SAM2+CLIP+Depth+NDVI change detect…');
-      const data = await apiPost('/api/detect', {
-        bbox_wgs84: currentBbox,
-        threshold: parseFloat(document.getElementById('threshold').value),
-        year_a: yearA, year_b: yearB,
-      });
-      renderDetection(data);
-      setStatus(`${data.stats.total} sites · max score ${(data.stats.max_prob*100).toFixed(0)}%`, 'ok');
-
-    }
-  } catch (e) {
+    setStatus('Downloading tile → SAM2 segment → CLIP + NDVI + Depth classify…');
+    const year = parseInt(document.getElementById('year-b').value);
+    const data = await apiPost('/api/auto-segment', { bbox_wgs84: currentBbox, year });
+    renderResults(data);
+    setStatus(`${data.stats.construction} construction / ${data.stats.total} total segments`, 'ok');
+  } catch(e) {
     setStatus('Error: ' + e.message, 'error');
   } finally {
     btn.classList.remove('loading');
@@ -550,206 +456,125 @@ async function apiPost(url, body) {
   return r.json();
 }
 
-// ── Render: Auto Segment (CLIP) ─────────────────────────────────────────────
-function renderSegments(data) {
-  if (!data.geojson.features.length) {
-    showResults(0, 0, '—', '—', []);
-    return;
-  }
-  segmentLayer = L.geoJSON(data.geojson, {
-    style: f => {
-      const col  = f.properties.color || '#888';
-      const isC  = f.properties.is_construction;
-      return { color: col, weight: isC ? 2.5 : 1.0, fillColor: col, fillOpacity: isC ? 0.65 : 0.40, dashArray: isC ? null : '4,3' };
-    },
-    onEachFeature: (f, layer) => {
-      const p = f.properties;
-      const top3Html = (p.top3 || []).map((t, i) =>
-        `<tr><td style="color:#888;font-size:11px;">${i === 0 ? '▶' : '  '} ${t.label}</td><td style="text-align:right;font-weight:${i===0?700:400};color:${i===0?p.color:'#888'}">${(t.score*100).toFixed(0)}%</td></tr>`
-      ).join('');
-      layer.bindPopup(`
-        <div style="font-family:sans-serif;font-size:13px;min-width:220px;">
-          <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;">
-            <span style="width:12px;height:12px;border-radius:3px;background:${p.color};display:inline-block;flex-shrink:0;"></span>
-            <b style="color:${p.color}">${p.label}</b>
-          </div>
-          <table style="width:100%;border-collapse:collapse;">${top3Html}</table>
-          <div style="margin-top:8px;font-size:11px;color:#888;">
-            Area: ${p.area_m2.toLocaleString()} m² &nbsp;|&nbsp;
-            IOU: ${(p.predicted_iou*100).toFixed(0)}% &nbsp;|&nbsp;
-            Stability: ${(p.stability_score*100).toFixed(0)}%
-          </div>
-        </div>
-      `);
-      layer.on('mouseover', () => layer.setStyle({ fillOpacity: p.is_construction ? 0.85 : 0.65, weight: p.is_construction ? 3 : 2 }));
-      layer.on('mouseout',  () => layer.resetStyle());
-    }
-  });
-  if (showSeg) segmentLayer.addTo(map);
-  if (data.bounds) {
-    map.fitBounds(data.bounds, { padding: [20, 20] });
+// ── Render ─────────────────────────────────────────────────────────────────────
+function renderResults(data) {
+  const bounds = data.bounds;  // [[south, west], [north, east]]
+
+  // NDVI overlay
+  if (data.ndvi_overlay) {
+    ndviLayer = L.imageOverlay(data.ndvi_overlay, L.latLngBounds(bounds[0], bounds[1]),
+                               { opacity: overlayOpacity, zIndex: 300 });
+    if (showNdvi) ndviLayer.addTo(map);
+    document.getElementById('tog-ndvi').disabled = false;
   } else {
-    map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
+    document.getElementById('tog-ndvi').style.opacity = '0.35';
+    document.getElementById('tog-ndvi').title = 'NDVI unavailable for this area';
   }
 
-  document.getElementById('layer-toggles').style.display = 'flex';
-  document.getElementById('tog-heat').style.display = 'none';
-  document.getElementById('opacity-row').style.display = 'none';
+  // Depth overlay
+  if (data.depth_overlay) {
+    depthLayer = L.imageOverlay(data.depth_overlay, L.latLngBounds(bounds[0], bounds[1]),
+                                { opacity: overlayOpacity, zIndex: 310 });
+    if (showDepth) depthLayer.addTo(map);
+    document.getElementById('tog-depth').disabled = false;
+  } else {
+    document.getElementById('tog-depth').style.opacity = '0.35';
+    document.getElementById('tog-depth').title = 'Depth unavailable';
+  }
 
-  const labels = data.stats.labels || {};
-  const topType = Object.entries(labels).sort((a,b) => b[1]-a[1])[0];
-  const maxScore = data.geojson.features.reduce((m, f) => Math.max(m, f.properties.score), 0);
-  showResults(data.stats.construction, data.stats.total,
-    topType ? topType[0].split(' ').slice(0,2).join(' ') : '—',
-    (maxScore * 100).toFixed(0) + '%',
-    Object.entries(labels).sort((a,b) => b[1]-a[1]).slice(0, 8).map(([l, n]) => {
-      const idx = CLIP_LABELS.indexOf(l);
-      const col = LABEL_COLORS[idx] || '#888';
-      return { label: l, count: n, color: col };
-    })
-  );
-}
-
-// ── Render: Change Detection ─────────────────────────────────────────────────
-function renderDetection(data) {
-  const bounds = data.raster.bounds;
-  heatmapLayer = L.imageOverlay(data.raster.data, L.latLngBounds(bounds[0], bounds[1]), { opacity: 0.6, zIndex: 400 });
-  if (showHeat) heatmapLayer.addTo(map);
-
+  // Segment polygons (on top)
   if (data.geojson.features.length > 0) {
-    segmentLayer = L.geoJSON(data.geojson, {
-      style: f => ({
-        color:       f.properties.type === 'preexisting' ? '#f0883e' : '#f85149',
-        weight: 2, fillColor: f.properties.type === 'preexisting' ? '#f0883e' : '#f85149', fillOpacity: 0.3,
-      }),
+    segLayer = L.geoJSON(data.geojson, {
+      style: f => {
+        const col = f.properties.color || '#888';
+        const isC = f.properties.is_construction;
+        return {
+          color: col, weight: isC ? 2.0 : 0.8,
+          fillColor: col, fillOpacity: isC ? 0.65 : 0.40,
+          dashArray: isC ? null : '3,3',
+        };
+      },
       onEachFeature: (f, layer) => {
         const p = f.properties;
+        const top3Html = (p.top3 || []).map((t, i) => `
+          <tr>
+            <td style="color:#888;font-size:11px;">${i === 0 ? '▶' : '  '} ${t.label.split(' ').slice(0,4).join(' ')}</td>
+            <td style="text-align:right;font-weight:${i===0?700:400};color:${i===0?p.color:'#888'}">${(t.score*100).toFixed(0)}%</td>
+          </tr>`).join('');
+
+        const ndviHtml = p.mean_ndvi != null
+          ? `<tr><td style="color:#888">NDVI</td><td>${p.mean_ndvi.toFixed(3)} ${p.mean_ndvi < 0 ? '🟥 bare/construction' : p.mean_ndvi > 0.3 ? '🟩 vegetation' : '🟨 mixed'}</td></tr>`
+          : '';
+        const depthHtml = p.depth_variance != null
+          ? `<tr><td style="color:#888">Depth var</td><td>${p.depth_variance.toFixed(1)} ${p.depth_variance > 5 ? '🔶 rough' : '🔷 flat'}</td></tr>`
+          : '';
+
         layer.bindPopup(`
-          <b style="color:${p.type==='preexisting'?'#f0883e':'#f85149'}">${p.type === 'preexisting' ? '🟠 Preexisting' : '🔴 New site'}</b>
-          <table style="margin-top:6px;font-size:12px;">
-            <tr><td style="color:#888">Score</td><td>${(p.prob_combined*100).toFixed(1)}%</td></tr>
-            <tr><td style="color:#888">Area</td><td>${p.area_m2.toLocaleString()} m²</td></tr>
-          </table>
+          <div style="font-family:sans-serif;font-size:13px;min-width:230px;">
+            <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;">
+              <span style="width:12px;height:12px;border-radius:3px;background:${p.color};display:inline-block;flex-shrink:0;"></span>
+              <b style="color:${p.color}">${p.label.split(' ').slice(0,4).join(' ')}</b>
+            </div>
+            <table style="width:100%;border-collapse:collapse;">
+              ${top3Html}
+              <tr><td colspan=2 style="padding:4px 0;border-top:1px solid #30363d;"></td></tr>
+              ${ndviHtml}
+              ${depthHtml}
+              <tr><td style="color:#888;font-size:11px;">Area</td><td>${p.area_m2.toLocaleString()} m²</td></tr>
+              <tr><td style="color:#888;font-size:11px;">IoU</td><td>${(p.predicted_iou*100).toFixed(0)}%</td></tr>
+            </table>
+          </div>
         `);
-        layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.6 }));
+        layer.on('mouseover', () => layer.setStyle({ fillOpacity: p.is_construction ? 0.85 : 0.65, weight: p.is_construction ? 3 : 1.5 }));
         layer.on('mouseout',  () => layer.resetStyle());
       }
     });
-    if (showSeg) segmentLayer.addTo(map);
-    map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
+    if (showSeg) segLayer.addTo(map);
   }
 
+  map.fitBounds(bounds, { padding: [20, 20] });
+
+  // Show controls
   document.getElementById('layer-toggles').style.display = 'flex';
-  document.getElementById('tog-heat').style.display = '';
-  document.getElementById('opacity-row').style.display = 'flex';
+  document.getElementById('overlay-opacity-row').style.display = 'flex';
+  updateOverlayLegend();
 
-  showResults(data.stats.n_preexisting, data.stats.total, 'preexisting / new',
-    (data.stats.max_prob * 100).toFixed(0) + '%', [
-      { label: 'Preexisting (was 2022)', count: data.stats.n_preexisting, color: '#f0883e' },
-      { label: 'New (after 2022)',       count: data.stats.n_new,         color: '#f85149' },
-    ]);
-}
-
-// ── Render: One-Shot ──────────────────────────────────────────────────────────
-function renderOneShot(data) {
-  if (!data.geojson || !data.geojson.features.length) {
-    setStatus('No matching segments found — try a lower threshold or different reference.', 'error');
-    return;
-  }
-
-  segmentLayer = L.geoJSON(data.geojson, {
-    style: f => {
-      const col = f.properties.color || '#888888';
-      const score = f.properties.final_score || 0;
-      const isMatch = f.properties.is_match;
-      return {
-        color: col, weight: isMatch ? 2.5 : 0.8,
-        fillColor: col, fillOpacity: isMatch ? 0.65 : 0.35,
-      };
-    },
-    onEachFeature: (f, layer) => {
-      const p = f.properties;
-      const score = (p.final_score || 0) * 100;
-      const sam2  = (p.sam2_sim   || 0) * 100;
-      const clip  = (p.clip_score || 0) * 100;
-      const col   = p.color || '#888';
-      layer.bindPopup(`
-        <div style="font-family:sans-serif;font-size:13px;min-width:200px;">
-          <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;">
-            <span style="width:12px;height:12px;border-radius:3px;background:${col};display:inline-block;flex-shrink:0;"></span>
-            <b style="color:${col}">${p.is_match ? '🎯 Match' : 'Non-match'}</b>
-          </div>
-          <table style="width:100%;border-collapse:collapse;font-size:12px;">
-            <tr><td style="color:#888">Final score</td><td><b>${score.toFixed(1)}%</b></td></tr>
-            <tr><td style="color:#888">SAM2 sim</td><td>${sam2.toFixed(1)}%</td></tr>
-            <tr><td style="color:#888">CLIP score</td><td>${clip.toFixed(1)}%</td></tr>
-            <tr><td style="color:#888">Label</td><td>${p.label || '—'}</td></tr>
-            <tr><td style="color:#888">Area</td><td>${p.area_m2 ? p.area_m2.toLocaleString() : '—'} m²</td></tr>
-          </table>
-        </div>
-      `);
-      layer.on('mouseover', () => layer.setStyle({ fillOpacity: p.is_match ? 0.85 : 0.55, weight: p.is_match ? 3 : 1.5 }));
-      layer.on('mouseout',  () => layer.resetStyle());
-    }
-  });
-  segmentLayer.addTo(map);
-
-  if (data.bounds) {
-    map.fitBounds(data.bounds, { padding: [20, 20] });
-  } else {
-    map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
-  }
-
-  document.getElementById('results-section').style.display = 'block';
-  document.getElementById('stat-constr').textContent = data.stats.n_matches;
-  document.getElementById('stat-total').textContent  = data.stats.n_total || data.geojson.features.length;
-  document.getElementById('stat-types').textContent  = 'similar';
-  document.getElementById('stat-score').textContent  = ((data.stats.max_score || data.stats.max_sim || 0) * 100).toFixed(0) + '%';
-  document.getElementById('label-list').innerHTML = `
-    <div class="label-row">
-      <span class="label-dot" style="background:#FF6600;"></span>
-      <span class="label-name">SAM2 + CLIP similarity match</span>
-      <span class="label-count">${data.stats.n_matches}</span>
-    </div>
-    <div class="label-row">
-      <span class="label-dot" style="background:#555;"></span>
-      <span class="label-name">Below threshold</span>
-      <span class="label-count">${(data.stats.n_total || data.geojson.features.length) - data.stats.n_matches}</span>
-    </div>`;
-}
-
-function showResults(constr, total, topType, score, labelItems) {
-  document.getElementById('stat-constr').textContent = constr;
-  document.getElementById('stat-total').textContent  = total;
-  document.getElementById('stat-types').textContent  = topType;
-  document.getElementById('stat-score').textContent  = score;
-  const ll = document.getElementById('label-list');
-  ll.innerHTML = labelItems.map(item => `
-    <div class="label-row">
-      <span class="label-dot" style="background:${item.color};"></span>
-      <span class="label-name" title="${item.label}">${item.label}</span>
-      <span class="label-count">${item.count}</span>
-    </div>
-  `).join('');
+  // Stats
+  const labels = data.stats.labels || {};
+  const topEntry = Object.entries(labels).sort((a,b) => b[1]-a[1])[0];
+  document.getElementById('stat-constr').textContent = data.stats.construction;
+  document.getElementById('stat-total').textContent  = data.stats.total;
+  document.getElementById('stat-types').textContent  = topEntry ? topEntry[0].split(' ').slice(0,2).join(' ') : '—';
+  document.getElementById('stat-ndvi').textContent   = data.ndvi_overlay ? '✓' : '✗';
+  document.getElementById('label-list').innerHTML = Object.entries(labels)
+    .sort((a,b) => b[1]-a[1]).slice(0, 10).map(([lbl, n]) => {
+      const idx = CLIP_LABELS.indexOf(lbl);
+      const col = LABEL_COLORS[idx] || '#888';
+      return `<div class="label-row">
+        <span class="label-dot" style="background:${col};"></span>
+        <span class="label-name" title="${lbl}">${lbl.split(' ').slice(0,4).join(' ')}</span>
+        <span class="label-count">${n}</span>
+      </div>`;
+    }).join('');
   document.getElementById('results-section').style.display = 'block';
 }
 
 function downloadGPKG() { window.location.href = '/api/download/results.gpkg'; }
 
-// ── Status ──────────────────────────────────────────────────────────────────
+// ── Status ─────────────────────────────────────────────────────────────────────
 function setStatus(msg, type = '') {
   const el = document.getElementById('status-bar');
   el.textContent = msg; el.className = type;
 }
 
-// ── Health poll ─────────────────────────────────────────────────────────────
+// ── Health poll ────────────────────────────────────────────────────────────────
 async function checkHealth() {
   try {
     const d = await (await fetch('/api/health')).json();
     if (d.ready) {
       setStatus(`Models ready · ${d.device} · SAM2 + CLIP + Depth`, 'ok');
       clearInterval(healthInterval);
-    } else { setStatus('Loading SAM2 + CLIP + Depth models… (first load ~90 s)'); }
+    } else { setStatus('Loading models… (first load ~60–90 s)'); }
   } catch { setStatus('Connecting…'); }
 }
 const healthInterval = setInterval(checkHealth, 3000);
