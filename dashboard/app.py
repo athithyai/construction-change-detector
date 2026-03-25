@@ -42,9 +42,6 @@ DEVICE: Optional[torch.device] = None
 CFG = None
 MODEL_READY = False
 LAST_GPKG: Optional[Path] = None
-SAM2_PREDICTOR = None
-GDINO_PROCESSOR = None
-GDINO_MODEL = None
 SAM2_MASK_GEN = None
 CLIP_MODEL = None
 CLIP_PROCESSOR = None
@@ -76,17 +73,21 @@ CLIP_LABELS = [
 ]
 CONSTRUCTION_IDXS = frozenset(range(6))   # labels 0-5 are construction-related
 LABEL_COLORS_LIST = [
-    "#FF3333", "#FF7700", "#FFD700", "#FF66AA", "#CC3300", "#FF9944",
-    "#778899", "#9999BB", "#88CC88", "#66AACC", "#AAAACC",
-    "#44AA44", "#4488FF", "#CCAA66",
+    "#FF4400",  # 0  construction site — vivid orange-red
+    "#FF8C00",  # 1  building under construction — dark orange
+    "#FFD700",  # 2  excavation — gold
+    "#FF1493",  # 3  scaffolding — deep pink
+    "#FF6347",  # 4  demolition — tomato
+    "#FFA500",  # 5  concrete pour — orange
+    "#A0A0A0",  # 6  road — medium gray
+    "#B0C4DE",  # 7  parking — light steel blue
+    "#90EE90",  # 8  residential — light green
+    "#87CEEB",  # 9  office/commercial — sky blue
+    "#DDA0DD",  # 10 industrial — plum
+    "#2E8B57",  # 11 vegetation — sea green
+    "#4169E1",  # 12 water — royal blue
+    "#D2B48C",  # 13 bare soil — tan
 ]
-
-# Construction-related text prompts for Grounding DINO
-CONSTRUCTION_PROMPTS = (
-    "crane . tower crane . scaffolding . excavator . bulldozer . dump truck . "
-    "concrete mixer . pile driver . construction site . building under construction . "
-    "construction machinery . foundation . building frame . steel structure"
-)
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="SamSpade")
@@ -99,8 +100,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 # ── Model loading ──────────────────────────────────────────────────────────────
 def _load_model() -> None:
-    global MODEL, PROTOTYPES, DEVICE, CFG, MODEL_READY, SAM2_PREDICTOR
-    global GDINO_PROCESSOR, GDINO_MODEL
+    global MODEL, PROTOTYPES, DEVICE, CFG, MODEL_READY
     global SAM2_MASK_GEN, CLIP_MODEL, CLIP_PROCESSOR, CLIP_TEXT_FEATS
     global DEPTH_MODEL, DEPTH_PROCESSOR
     try:
@@ -118,30 +118,16 @@ def _load_model() -> None:
         DEVICE     = device
         CFG        = cfg
 
-        # SAM2ImagePredictor — shares weights with MODEL (no extra VRAM)
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
-        SAM2_PREDICTOR = SAM2ImagePredictor(model.sam2_model)
-        logger.info("SAM2ImagePredictor ready.")
-
-        # Grounding DINO for text → bounding boxes
-        logger.info("Loading Grounding DINO …")
-        from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
-        gdino_id = "IDEA-Research/grounding-dino-base"
-        GDINO_PROCESSOR = AutoProcessor.from_pretrained(gdino_id)
-        GDINO_MODEL     = AutoModelForZeroShotObjectDetection.from_pretrained(gdino_id).to(device)
-        GDINO_MODEL.eval()
-        logger.info("Grounding DINO ready.")
-
-        # SAM2 AutomaticMaskGenerator — reuses frozen SAM2 weights, no extra VRAM
+        # SAM2 AutomaticMaskGenerator — 32 pts/side = 1024 prompt points, full pixel coverage
         from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
         SAM2_MASK_GEN = SAM2AutomaticMaskGenerator(
             model=model.sam2_model,
-            points_per_side=16,        # 256 prompt points → good coverage
-            pred_iou_thresh=0.75,
-            stability_score_thresh=0.85,
-            min_mask_region_area=200,  # filter tiny noise
+            points_per_side=32,
+            pred_iou_thresh=0.70,
+            stability_score_thresh=0.80,
+            min_mask_region_area=100,
         )
-        logger.info("SAM2AutomaticMaskGenerator ready.")
+        logger.info("SAM2AutomaticMaskGenerator ready (32 pts/side).")
 
         # CLIP ViT-L/14 for per-segment semantic classification
         logger.info("Loading CLIP ViT-L/14 …")
@@ -190,13 +176,6 @@ class DetectRequest(BaseModel):
     year_a: int = 2022
     year_b: int = 2024
 
-
-class SegmentRequest(BaseModel):
-    polygon_wgs84: dict        # GeoJSON Polygon geometry
-    text_prompts: str = CONSTRUCTION_PROMPTS
-    box_threshold: float = 0.25
-    text_threshold: float = 0.25
-    year_b: int = 2024
 
 
 class AutoSegRequest(BaseModel):
@@ -407,6 +386,26 @@ def _clip_classify_masks(img_np: np.ndarray, masks_data: list) -> list:
     return results
 
 
+# ── SAM2 segment-level feature helper ──────────────────────────────────────────
+def _segment_mean_features(feats_n: torch.Tensor, mask_np: np.ndarray) -> torch.Tensor:
+    """Extract L2-normalized mean SAM2 features for one segment mask.
+
+    Args:
+        feats_n: [1, C, Hf, Wf]  — already L2-normalized feature map
+        mask_np: [H, W] bool      — full-resolution segment mask
+    Returns:
+        [C] normalized mean feature vector
+    """
+    Hf, Wf = feats_n.shape[2:]
+    m_t     = torch.from_numpy(mask_np.astype(np.float32)).unsqueeze(0).unsqueeze(0)
+    m_small = F.interpolate(m_t, size=(Hf, Wf), mode="nearest").squeeze()  # [Hf, Wf]
+    f_flat  = feats_n.squeeze(0).permute(1, 2, 0).reshape(-1, feats_n.shape[1])  # [Hf*Wf, C]
+    m_flat  = m_small.reshape(-1).bool()
+    if m_flat.sum() == 0:
+        return F.normalize(f_flat.mean(dim=0), dim=0)
+    return F.normalize(f_flat[m_flat].mean(dim=0), dim=0)
+
+
 # ── samgeo-powered vectorization ───────────────────────────────────────────────
 def _samgeo_masks_to_gdf(masks_sorted: list, img_shape: tuple,
                           tile_crs, tile_transform) -> "gpd.GeoDataFrame":
@@ -422,7 +421,9 @@ def _samgeo_masks_to_gdf(masks_sorted: list, img_shape: tuple,
     from shapely.ops import unary_union
 
     H, W = img_shape[:2]
-    # Build labeled array: masks sorted by area ascending → larger masks get higher IDs
+    # Build labeled array: caller must pass masks sorted DESCENDING by area.
+    # Large masks are written first; smaller masks overwrite them → every pixel
+    # ends up labelled with its *smallest* enclosing mask (full pixel coverage).
     labeled = np.zeros((H, W), dtype=np.int32)
     for idx, m in enumerate(masks_sorted, start=1):
         labeled[m["segmentation"]] = idx
@@ -448,15 +449,19 @@ def _samgeo_masks_to_gdf(masks_sorted: list, img_shape: tuple,
 # ── Auto-segment (samgeo pipeline + SAM2 masks + CLIP labels) ──────────────────
 def _run_auto_segment(bbox_rd: tuple, year: int) -> dict:
     """
-    SAM2 AutomaticMaskGenerator → samgeo raster_to_vector → CLIP per-mask → GeoJSON + GeoPackage.
-    Uses the segment-geospatial (samgeo) library for CRS-aware vectorization and GeoPackage output.
+    SAM2 AutomaticMaskGenerator → full pixel coverage → CLIP per-mask classify → GeoJSON.
+    Masks are sorted DESCENDING by area so small masks overwrite large ones in the
+    labeled raster — every pixel is assigned to its smallest enclosing segment.
+    Results are clipped to the user's originally drawn bbox (not the PDOK-expanded one).
     """
     import geopandas as gpd
-    import rasterio
+    from shapely.geometry import box as shapely_box
 
     global LAST_GPKG
 
+    original_bbox_rd = bbox_rd          # save before PDOK expansion
     bbox_rd = _enforce_min_extent(bbox_rd)
+
     with tempfile.TemporaryDirectory() as tmp:
         dl_8  = PDOKDownloader(resolution="8cm",  crs="EPSG:28992", request_delay=0)
         dl_25 = PDOKDownloader(resolution="25cm", crs="EPSG:28992", request_delay=0)
@@ -465,35 +470,41 @@ def _run_auto_segment(bbox_rd: tuple, year: int) -> dict:
             raise HTTPException(404, f"No PDOK coverage for {year}. bbox_rd={bbox_rd}")
 
         img, src = load_geotiff_rgb(tile_path)
-        tile_crs       = src.crs        # rasterio CRS (EPSG:28992)
-        tile_transform = src.transform  # affine transform from GeoTIFF
+        tile_crs       = src.crs
+        tile_transform = src.transform
         src.close()
         H, W = img.shape[:2]
 
-        # SAM2 automatic mask generation (uses our already-loaded SAM2_MASK_GEN)
-        logger.info("samgeo pipeline: SAM2 AutoMaskGen on %dx%d …", H, W)
+        # SAM2 AutoMaskGen — 32 pts/side = 1024 prompts
+        logger.info("SAM2 AutoMaskGen on %dx%d …", H, W)
         masks_data = SAM2_MASK_GEN.generate(img)
         logger.info("  → %d raw masks", len(masks_data))
 
-        # Sort by area so smaller masks aren't buried under larger ones in the labeled raster
-        masks_sorted = sorted(masks_data, key=lambda m: m["area"])
+        # Sort DESCENDING by area: large masks first, small masks overwrite → full coverage
+        masks_sorted = sorted(masks_data, key=lambda m: m["area"], reverse=True)
 
-        # samgeo-style vectorization: labeled raster → geopandas GDF in WGS84
+        # Vectorize: labeled raster → GDF in WGS84
         gdf_wgs = _samgeo_masks_to_gdf(masks_sorted, img.shape, tile_crs, tile_transform)
-        logger.info("  → %d vector features after samgeo vectorization", len(gdf_wgs))
+        logger.info("  → %d vector features", len(gdf_wgs))
 
-        # CLIP classify all masks
-        logger.info("  → CLIP classifying %d crops …", len(masks_sorted))
+        # Clip to the user's originally drawn area (remove PDOK-padding expansion)
+        t2 = Transformer.from_crs("EPSG:28992", "EPSG:4326", always_xy=True)
+        ox1, oy1 = t2.transform(original_bbox_rd[0], original_bbox_rd[1])
+        ox2, oy2 = t2.transform(original_bbox_rd[2], original_bbox_rd[3])
+        clip_box = shapely_box(ox1, oy1, ox2, oy2)
+        gdf_wgs  = gdf_wgs[gdf_wgs.geometry.intersects(clip_box)].copy()
+        gdf_wgs["geometry"] = gdf_wgs.geometry.intersection(clip_box)
+        gdf_wgs  = gdf_wgs[~gdf_wgs.geometry.is_empty].reset_index(drop=True)
+        logger.info("  → %d features after bbox clip", len(gdf_wgs))
+
+        # CLIP classify all masks (same order as masks_sorted)
+        logger.info("  → CLIP classifying %d segments …", len(masks_sorted))
         clip_res = _clip_classify_masks(img, masks_sorted)
 
-        # Save GeoPackage via samgeo-style pipeline (geopandas → GPKG)
-        gpkg_out = ROOT.parent / "outputs" / f"segments_{year}.gpkg"
-        gpkg_out.parent.mkdir(exist_ok=True)
-
-        # Build enriched GeoDataFrame with CLIP labels
+        # Build records
         records = []
         for _, row in gdf_wgs.iterrows():
-            mask_idx = int(row["mask_id"]) - 1   # 1-indexed in labeled → 0-indexed
+            mask_idx = int(row["mask_id"]) - 1   # 1-indexed → 0-indexed
             if mask_idx < 0 or mask_idx >= len(masks_sorted):
                 continue
             mdata = masks_sorted[mask_idx]
@@ -515,43 +526,43 @@ def _run_auto_segment(bbox_rd: tuple, year: int) -> dict:
                 "area_m2":         round(float(mdata["area"]), 1),
                 "stability_score": round(float(mdata.get("stability_score", 0)), 3),
                 "predicted_iou":   round(float(mdata.get("predicted_iou",   0)), 3),
-                # store top3 as JSON string (GPKG doesn't support nested objects)
                 "top3_labels":     " | ".join(t["label"] for t in top3),
                 "top3_scores":     " | ".join(f"{t['score']:.2f}" for t in top3),
                 "_color":          color,
-                "_top3":           top3,   # only used for GeoJSON response
+                "_top3":           top3,
             })
 
         if not records:
             return {"geojson": {"type": "FeatureCollection", "features": []},
+                    "bounds":  [list(_to_wgs84_bounds(original_bbox_rd)[1::-1]),
+                                list(_to_wgs84_bounds(original_bbox_rd)[3:1:-1])],
                     "stats":   {"total": 0, "construction": 0, "labels": {}}}
 
-        gdf_out = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:4326")
-        # Save GeoPackage (samgeo convention: save with geopandas to_file)
+        gdf_out   = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:4326")
+        gpkg_out  = ROOT.parent / "outputs" / f"segments_{year}.gpkg"
+        gpkg_out.parent.mkdir(exist_ok=True)
         gpkg_cols = [c for c in gdf_out.columns if not c.startswith("_")]
         gdf_out[gpkg_cols].to_file(str(gpkg_out), driver="GPKG", layer="segments")
         LAST_GPKG = gpkg_out
-        logger.info("samgeo GeoPackage saved → %s", gpkg_out)
+        logger.info("GeoPackage saved → %s", gpkg_out)
 
-        # Build GeoJSON response
-        features_json = []
-        for rec in records:
-            features_json.append({
-                "type": "Feature",
-                "geometry": rec["geometry"].__geo_interface__,
-                "properties": {
-                    "label":           rec["label"],
-                    "score":           rec["clip_score"],
-                    "color":           rec["_color"],
-                    "is_construction": rec["is_construction"],
-                    "top3":            rec["_top3"],
-                    "area_m2":         rec["area_m2"],
-                    "stability_score": rec["stability_score"],
-                    "predicted_iou":   rec["predicted_iou"],
-                },
-            })
+        features_json = [{
+            "type": "Feature",
+            "geometry": rec["geometry"].__geo_interface__,
+            "properties": {
+                "label":           rec["label"],
+                "score":           rec["clip_score"],
+                "color":           rec["_color"],
+                "is_construction": rec["is_construction"],
+                "top3":            rec["_top3"],
+                "area_m2":         rec["area_m2"],
+                "stability_score": rec["stability_score"],
+                "predicted_iou":   rec["predicted_iou"],
+            },
+        } for rec in records]
 
-        features_json.sort(key=lambda f: (-f["properties"]["is_construction"],
+        # Construction segments drawn on top
+        features_json.sort(key=lambda f: (0 if f["properties"]["is_construction"] else 1,
                                           -f["properties"]["area_m2"]))
         n_constr = sum(1 for f in features_json if f["properties"]["is_construction"])
         label_counts: dict = {}
@@ -559,7 +570,7 @@ def _run_auto_segment(bbox_rd: tuple, year: int) -> dict:
             lbl = f["properties"]["label"]
             label_counts[lbl] = label_counts.get(lbl, 0) + 1
 
-        west, south, east, north = _to_wgs84_bounds(bbox_rd)
+        west, south, east, north = _to_wgs84_bounds(original_bbox_rd)
         return {
             "geojson": {"type": "FeatureCollection", "features": features_json},
             "bounds":  [[south, west], [north, east]],
@@ -719,179 +730,17 @@ def _run_detection(bbox_rd: tuple, threshold: float, year_a: int, year_b: int) -
         }
 
 
-# ── SAM + text segmentation ────────────────────────────────────────────────────
-def _run_segmentation(polygon_geojson: dict, text_prompts: str,
-                      box_threshold: float, text_threshold: float, year_b: int) -> dict:
-    """Grounding DINO → boxes → SAM2 → masks → score vs prototypes."""
-    global LAST_GPKG
-    import geopandas as gpd
-    from rasterio.transform import from_bounds
-    from rasterio.features import shapes as rio_shapes
-    from shapely.geometry import shape as shapely_shape, mapping
-    from shapely.ops import unary_union
-
-    # ── 1. Get bbox from polygon ──────────────────────────────────────────────
-    t_fwd = Transformer.from_crs("EPSG:4326", "EPSG:28992", always_xy=True)
-    coords_wgs = polygon_geojson["coordinates"][0]
-    xs_rd = [t_fwd.transform(c[0], c[1])[0] for c in coords_wgs]
-    ys_rd = [t_fwd.transform(c[0], c[1])[1] for c in coords_wgs]
-    bbox_rd = (min(xs_rd), min(ys_rd), max(xs_rd), max(ys_rd))
-
-    bbox_rd = _enforce_min_extent(bbox_rd)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        # ── 2. Download tile ──────────────────────────────────────────────────
-        dl_8  = PDOKDownloader(resolution="8cm",  crs="EPSG:28992", request_delay=0)
-        dl_25 = PDOKDownloader(resolution="25cm", crs="EPSG:28992", request_delay=0)
-        path_b = str(Path(tmp) / f"tile_{year_b}.tif")
-        logger.info("Fetching %d tile for segmentation  bbox_rd=%s …", year_b, bbox_rd)
-        r = _fetch_tile(dl_8, dl_25, bbox_rd, year_b, path_b)
-        if r is None or not Path(path_b).exists():
-            raise HTTPException(404, f"No PDOK coverage for year {year_b} at this location. bbox_rd={bbox_rd}")
-
-        img_b, src_b = load_geotiff_rgb(path_b)   # HxWx3 uint8
-        src_b.close()
-        H, W = img_b.shape[:2]
-        rd_transform = from_bounds(*bbox_rd, width=W, height=H)
-        pil_img = Image.fromarray(img_b)
-
-        # ── 3. Grounding DINO: text → boxes ──────────────────────────────────
-        logger.info("Running Grounding DINO: '%s'", text_prompts[:60])
-        inputs = GDINO_PROCESSOR(
-            images=pil_img,
-            text=text_prompts,
-            return_tensors="pt",
-        ).to(DEVICE)
-
-        with torch.no_grad():
-            outputs = GDINO_MODEL(**inputs)
-
-        results = GDINO_PROCESSOR.post_process_grounded_object_detection(
-            outputs,
-            inputs.input_ids,
-            threshold=box_threshold,
-            text_threshold=text_threshold,
-            target_sizes=[(H, W)],
-        )[0]
-
-        boxes  = results["boxes"].cpu().numpy()   # [N, 4] in xyxy pixel coords
-        labels = results["labels"]
-        scores = results["scores"].cpu().numpy()
-
-        logger.info("Grounding DINO found %d objects.", len(boxes))
-
-        if len(boxes) == 0:
-            return {
-                "geojson": {"type": "FeatureCollection", "features": []},
-                "stats": {"total": 0, "objects": []},
-                "message": "No construction objects detected. Try lowering the threshold or zoom in more.",
-            }
-
-        # ── 4. SAM2: boxes → precise masks ───────────────────────────────────
-        logger.info("Running SAM2 predictor on %d boxes…", len(boxes))
-        SAM2_PREDICTOR.set_image(img_b)
-
-        all_masks, all_labels, all_scores = [], [], []
-        for box, label, score in zip(boxes, labels, scores):
-            masks, mask_scores, _ = SAM2_PREDICTOR.predict(
-                box=box,
-                multimask_output=False,
-            )
-            best = int(np.argmax(mask_scores))
-            all_masks.append(masks[best].astype(bool))   # HxW bool
-            all_labels.append(label)
-            all_scores.append(float(score))
-
-        # ── 5. Score each mask vs construction prototypes ─────────────────────
-        transforms = get_inference_transforms(1024)
-        res = transforms(image=img_b,
-                         mask=np.zeros(img_b.shape[:2], dtype=np.uint8),
-                         image2=img_b,
-                         mask2=np.zeros(img_b.shape[:2], dtype=np.uint8))
-        t_b = res["image"].unsqueeze(0).to(DEVICE)
-
-        with torch.no_grad():
-            feats = MODEL.image_encoder(t_b)["vision_features"]   # [1,C,Hf,Wf]
-            feats = F.normalize(feats, dim=1)
-            pn    = F.normalize(PROTOTYPES, dim=1)                 # [K,C]
-            Hf, Wf = feats.shape[2:]
-            # Per-pixel max cosine sim → appearance score
-            f_flat  = feats.squeeze(0).permute(1, 2, 0).reshape(-1, feats.shape[1])
-            sim_map = (f_flat @ pn.T).max(1).values.reshape(Hf, Wf)
-            sim_map = ((sim_map.clamp(-1, 1) + 1) / 2).cpu().numpy()  # [Hf, Wf] in [0,1]
-
-        # Upsample sim_map to full tile resolution
-        import cv2
-        sim_full = cv2.resize(sim_map, (W, H), interpolation=cv2.INTER_LINEAR)
-
-        # ── 6. Build GeoJSON features ─────────────────────────────────────────
-        records = []
-        t2 = Transformer.from_crs("EPSG:28992", "EPSG:4326", always_xy=True)
-
-        for mask, label, det_score in zip(all_masks, all_labels, all_scores):
-            # Prototype score for this mask
-            mask_u8 = mask.astype(np.uint8)
-            proto_score = float(sim_full[mask].mean()) if mask.any() else 0.0
-
-            # Vectorise the mask
-            polys = []
-            for geom_j, val in rio_shapes(mask_u8, mask=mask_u8, transform=rd_transform):
-                if val:
-                    p = shapely_shape(geom_j)
-                    if not p.is_empty and p.area > 1.0:
-                        polys.append(p)
-            if not polys:
-                continue
-            poly_rd = unary_union(polys)
-
-            # Convert to WGS84
-            from shapely.ops import transform as shp_transform
-            poly_wgs = shp_transform(
-                lambda x, y, z=None: t2.transform(x, y),
-                poly_rd,
-            )
-
-            records.append({
-                "type": "Feature",
-                "geometry": mapping(poly_wgs),
-                "properties": {
-                    "label":       label,
-                    "det_score":   round(det_score, 3),
-                    "proto_score": round(proto_score, 3),
-                    "combined":    round((det_score + proto_score) / 2, 3),
-                    "area_m2":     round(poly_rd.area, 1),
-                }
-            })
-
-        records.sort(key=lambda r: r["properties"]["combined"], reverse=True)
-
-        # Save GPKG
-        if records:
-            import geopandas as gpd
-            gdf_out = gpd.GeoDataFrame.from_features(records, crs="EPSG:4326")
-            gpkg_path = ROOT.parent / "outputs/dashboard_segments.gpkg"
-            gpkg_path.parent.mkdir(exist_ok=True)
-            gdf_out.to_file(str(gpkg_path), driver="GPKG", layer="construction_objects")
-            LAST_GPKG = gpkg_path
-
-        label_counts = {}
-        for r in records:
-            l = r["properties"]["label"]
-            label_counts[l] = label_counts.get(l, 0) + 1
-
-        return {
-            "geojson": {"type": "FeatureCollection", "features": records},
-            "stats": {
-                "total":    len(records),
-                "objects":  label_counts,
-                "max_combined": round(max((r["properties"]["combined"] for r in records), default=0), 3),
-            },
-        }
 
 
 # ── One-shot encoding ──────────────────────────────────────────────────────────
 def _run_encode_reference(bbox_rd: tuple, year: int) -> dict:
-    """Download tile, SAM2-encode, mean-pool → store as ONE_SHOT_ENCODING."""
+    """Segment-aware one-shot encoding.
+
+    1. SAM2 auto-segment the reference tile.
+    2. CLIP classify every segment → keep construction-class segments.
+    3. Extract SAM2 features **only from construction pixels** → focused embedding.
+    4. Thumbnail shows the reference image with construction segments highlighted.
+    """
     global ONE_SHOT_ENCODING, ONE_SHOT_CLIP, ONE_SHOT_PREVIEW
 
     bbox_rd = _enforce_min_extent(bbox_rd)
@@ -904,58 +753,102 @@ def _run_encode_reference(bbox_rd: tuple, year: int) -> dict:
 
         img, src = load_geotiff_rgb(tile_path)
         src.close()
+        H, W = img.shape[:2]
 
-        transforms = get_inference_transforms(1024)
-        res = transforms(image=img,
-                         mask=np.zeros(img.shape[:2], dtype=np.uint8),
-                         image2=img,
-                         mask2=np.zeros(img.shape[:2], dtype=np.uint8))
+        # 1. Auto-segment (descending sort for full coverage)
+        logger.info("One-shot encode: SAM2 auto-segment reference tile …")
+        masks_data = SAM2_MASK_GEN.generate(img)
+        if not masks_data:
+            raise HTTPException(422, "SAM2 found no segments in the reference area.")
+        masks_sorted = sorted(masks_data, key=lambda m: m["area"], reverse=True)
+        logger.info("  → %d segments", len(masks_sorted))
+
+        # 2. CLIP classify — find construction segments
+        clip_res = _clip_classify_masks(img, masks_sorted)
+        constr_masks = [m for m, cr in zip(masks_sorted, clip_res)
+                        if cr["top_idx"][0] in CONSTRUCTION_IDXS]
+
+        # Fallback: take top-5 by best construction label score if none found
+        if not constr_masks:
+            def _best_constr(cr):
+                return max((s for i, s in zip(cr["top_idx"], cr["top_scores"])
+                            if i in CONSTRUCTION_IDXS), default=0.0)
+            pairs = sorted(zip(masks_sorted, clip_res), key=lambda p: _best_constr(p[1]), reverse=True)
+            constr_masks = [m for m, _ in pairs[:5]]
+
+        logger.info("  → %d construction segment(s) identified for encoding", len(constr_masks))
+
+        # 3. Build combined construction mask
+        fg_mask = np.zeros((H, W), dtype=bool)
+        for m in constr_masks:
+            fg_mask |= m["segmentation"]
+        if fg_mask.sum() < 64:
+            fg_mask = np.ones((H, W), dtype=bool)  # full fallback
+
+        # 4. SAM2 encode → extract features from construction pixels only
+        tfm = get_inference_transforms(1024)
+        res = tfm(image=img, mask=np.zeros((H, W), dtype=np.uint8),
+                  image2=img, mask2=np.zeros((H, W), dtype=np.uint8))
         t = res["image"].unsqueeze(0).to(DEVICE)
-
         with torch.no_grad():
-            feats = MODEL.image_encoder(t)["vision_features"]   # [1,C,Hf,Wf]
-            feats_n = F.normalize(feats, dim=1)
-            # Mean-pool over spatial dimensions → [C]
-            ONE_SHOT_ENCODING = F.normalize(feats_n.squeeze(0).mean(dim=[1, 2]), dim=0)
+            feats_n = F.normalize(MODEL.image_encoder(t)["vision_features"], dim=1)
+            ONE_SHOT_ENCODING = _segment_mean_features(feats_n, fg_mask)
 
-        # CLIP encode full tile
-        with torch.no_grad():
-            pil_img = Image.fromarray(img)
-            inp    = CLIP_PROCESSOR(images=[pil_img], return_tensors="pt", padding=True).to(DEVICE)
-            v_out  = CLIP_MODEL.vision_model(pixel_values=inp["pixel_values"])
-            ONE_SHOT_CLIP = F.normalize(
-                CLIP_MODEL.visual_projection(v_out.pooler_output), dim=-1).squeeze(0)
+        # 5. CLIP encode construction crops
+        constr_crops = []
+        for m in constr_masks[:8]:
+            x, y, bw, bh = [int(v) for v in m["bbox"]]
+            crop = img[y: y + bh, x: x + bw]
+            if crop.size > 0:
+                constr_crops.append(Image.fromarray(crop))
+        if constr_crops:
+            with torch.no_grad():
+                inp    = CLIP_PROCESSOR(images=constr_crops, return_tensors="pt", padding=True).to(DEVICE)
+                v_out  = CLIP_MODEL.vision_model(pixel_values=inp["pixel_values"])
+                feats  = F.normalize(CLIP_MODEL.visual_projection(v_out.pooler_output), dim=-1)
+                ONE_SHOT_CLIP = F.normalize(feats.mean(dim=0), dim=0)
 
-        # Thumbnail preview
-        thumb = Image.fromarray(img).resize((200, 200), Image.LANCZOS)
+        # 6. Thumbnail: original image + construction segments highlighted in orange
+        thumb_arr = img.copy()
+        overlay   = thumb_arr.copy()
+        for m in constr_masks:
+            overlay[m["segmentation"]] = [255, 140, 0]
+        thumb_arr = (0.55 * thumb_arr + 0.45 * overlay).astype(np.uint8)
+        thumb = Image.fromarray(thumb_arr).resize((240, 240), Image.LANCZOS)
         buf   = io.BytesIO()
-        thumb.save(buf, format="JPEG", quality=75)
+        thumb.save(buf, format="JPEG", quality=82)
         ONE_SHOT_PREVIEW = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
+        logger.info("Reference encoded → SAM2 [%d-dim], %d constr segments",
+                    ONE_SHOT_ENCODING.shape[0], len(constr_masks))
         west, south, east, north = _to_wgs84_bounds(bbox_rd)
-        logger.info("Reference encoded → SAM2 [%d] + CLIP [%d]",
-                    ONE_SHOT_ENCODING.shape[0], ONE_SHOT_CLIP.shape[0])
         return {
-            "preview": ONE_SHOT_PREVIEW,
-            "bounds":  [[south, west], [north, east]],
+            "preview":                ONE_SHOT_PREVIEW,
+            "bounds":                 [[south, west], [north, east]],
+            "n_construction_segments": len(constr_masks),
+            "n_total_segments":       len(masks_sorted),
         }
 
 
 def _run_one_shot_search(bbox_rd: tuple, year: int, threshold: float) -> dict:
-    """Per-pixel cosine similarity between search tile features and ONE_SHOT_ENCODING."""
+    """Segment-level one-shot similarity search.
+
+    For each segment in the search tile:
+      - Extract mean SAM2 features from the segment's pixels
+      - Cosine similarity to ONE_SHOT_ENCODING  (focused construction embedding)
+      - CLIP construction score                  (semantic check)
+      - final_score = 0.55 * sam2_sim + 0.45 * clip_norm
+    Returns coloured GeoJSON segments (no heatmap needed).
+    """
     import geopandas as gpd
-    from rasterio.features import shapes as rio_shapes
-    from rasterio.transform import from_bounds
-    from shapely.geometry import shape
 
     if ONE_SHOT_ENCODING is None:
         raise HTTPException(400, "No reference encoding — call /api/encode-reference first.")
 
-    tile_size, overlap = 1024, 128
-    transforms = get_inference_transforms(tile_size)
+    original_bbox_rd = bbox_rd
+    bbox_rd = _enforce_min_extent(bbox_rd)
 
     with tempfile.TemporaryDirectory() as tmp:
-        bbox_rd = _enforce_min_extent(bbox_rd)
         dl_8  = PDOKDownloader(resolution="8cm",  crs="EPSG:28992", request_delay=0)
         dl_25 = PDOKDownloader(resolution="25cm", crs="EPSG:28992", request_delay=0)
         tile_path = str(Path(tmp) / f"search_{year}.tif")
@@ -963,66 +856,115 @@ def _run_one_shot_search(bbox_rd: tuple, year: int, threshold: float) -> dict:
             raise HTTPException(404, f"No PDOK coverage for {year}.")
 
         img, src = load_geotiff_rgb(tile_path)
+        tile_crs       = src.crs
+        tile_transform = src.transform
         src.close()
         H, W = img.shape[:2]
-        rd_transform = from_bounds(*bbox_rd, width=W, height=H)
 
-        tiles, _ = tile_image_for_inference(img, tile_size, overlap)
-        _, coords = tile_image_for_inference(img, tile_size, overlap)
-        ref = ONE_SHOT_ENCODING.to(DEVICE).view(1, -1, 1, 1)  # [1,C,1,1]
+        # 1. SAM2 auto-segment search tile (descending sort → full coverage)
+        logger.info("One-shot search: SAM2 auto-segment …")
+        masks_data   = SAM2_MASK_GEN.generate(img)
+        masks_sorted = sorted(masks_data, key=lambda m: m["area"], reverse=True)
+        logger.info("  → %d segments", len(masks_sorted))
 
-        sim_tiles = []
-        for tile in tiles:
-            res = transforms(image=tile,
-                             mask=np.zeros(tile.shape[:2], dtype=np.uint8),
-                             image2=tile,
-                             mask2=np.zeros(tile.shape[:2], dtype=np.uint8))
-            t = res["image"].unsqueeze(0).to(DEVICE)
-            with torch.no_grad():
-                feats_n = F.normalize(MODEL.image_encoder(t)["vision_features"], dim=1)
-                # Per-pixel cosine sim to stored reference vector → [1,1,Hf,Wf]
-                sim = (feats_n * ref).sum(dim=1, keepdim=True).clamp(-1, 1).add(1).div(2)
-                sim_up = F.interpolate(sim, size=(tile_size, tile_size),
-                                       mode="bilinear", align_corners=False)
-                # Blend 60% SAM2-sim + 40% CLIP spatial score
-                clip_map = torch.from_numpy(_clip_spatial_score(tile)).unsqueeze(0).unsqueeze(0).to(DEVICE)
-                clip_map = F.interpolate(clip_map, size=(tile_size, tile_size),
-                                         mode="bilinear", align_corners=False)
-                combined = (0.6 * sim_up + 0.4 * clip_map).clamp(0, 1)
-            sim_tiles.append(combined.squeeze().cpu().numpy())
+        # 2. CLIP classify all segments
+        clip_res = _clip_classify_masks(img, masks_sorted)
 
-        prob = stitch_tiles(sim_tiles, coords, (H, W))
-        binary = (prob >= threshold).astype(np.uint8)
-        records = []
-        for geom_j, val in rio_shapes(binary, mask=binary, transform=rd_transform):
-            if not val:
-                continue
-            poly = shape(geom_j)
-            if poly.is_empty or poly.area < 4.0:
-                continue
-            ys, xs = np.where(binary > 0)
-            records.append({
-                "geometry":   poly,
-                "type":       "match",
-                "similarity": round(float(prob[ys, xs].mean()), 4) if len(ys) else 0.0,
-                "area_m2":    round(poly.area, 1),
+        # 3. SAM2 encode full tile → feature map
+        tfm = get_inference_transforms(1024)
+        res = tfm(image=img, mask=np.zeros((H, W), dtype=np.uint8),
+                  image2=img, mask2=np.zeros((H, W), dtype=np.uint8))
+        t = res["image"].unsqueeze(0).to(DEVICE)
+        with torch.no_grad():
+            feats_n = F.normalize(MODEL.image_encoder(t)["vision_features"], dim=1)
+        ref = ONE_SHOT_ENCODING.to(DEVICE)  # [C]
+
+        # 4. Score each segment
+        scored = []
+        for m, cr in zip(masks_sorted, clip_res):
+            seg_vec  = _segment_mean_features(feats_n, m["segmentation"])
+            sam2_sim = float((seg_vec * ref).sum().clamp(0, 1).item())
+
+            # CLIP construction score, normalized to [0,1] (raw scores ~0.1-0.35)
+            raw_constr = max(
+                (s for i, s in zip(cr["top_idx"], cr["top_scores"]) if i in CONSTRUCTION_IDXS),
+                default=0.0,
+            )
+            clip_norm  = float(min(max(raw_constr - 0.08, 0.0) / 0.22, 1.0))
+            final      = 0.55 * sam2_sim + 0.45 * clip_norm
+
+            scored.append({
+                "mask":        m,
+                "cr":          cr,
+                "sam2_sim":    round(sam2_sim,  3),
+                "clip_norm":   round(clip_norm, 3),
+                "final_score": round(final,     3),
             })
 
-        geojson = {"type": "FeatureCollection", "features": []}
-        if records:
-            gdf = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:28992")
-            geojson = json.loads(gdf.to_crs("EPSG:4326").to_json())
+        # 5. Vectorize with same descending-area order
+        gdf_wgs = _samgeo_masks_to_gdf(masks_sorted, img.shape, tile_crs, tile_transform)
 
-        west, south, east, north = _to_wgs84_bounds(bbox_rd)
+        # Clip to original drawn bbox
+        from shapely.geometry import box as shapely_box
+        t2 = Transformer.from_crs("EPSG:28992", "EPSG:4326", always_xy=True)
+        ox1, oy1 = t2.transform(original_bbox_rd[0], original_bbox_rd[1])
+        ox2, oy2 = t2.transform(original_bbox_rd[2], original_bbox_rd[3])
+        clip_box = shapely_box(ox1, oy1, ox2, oy2)
+        gdf_wgs  = gdf_wgs[gdf_wgs.geometry.intersects(clip_box)].copy()
+        gdf_wgs["geometry"] = gdf_wgs.geometry.intersection(clip_box)
+        gdf_wgs  = gdf_wgs[~gdf_wgs.geometry.is_empty].reset_index(drop=True)
+
+        # 6. Build GeoJSON — colour by score (red = high similarity)
+        features = []
+        n_matches = 0
+        for _, row in gdf_wgs.iterrows():
+            mask_idx = int(row["mask_id"]) - 1
+            if mask_idx < 0 or mask_idx >= len(scored):
+                continue
+            sc = scored[mask_idx]
+            cr = sc["cr"]
+            fs = sc["final_score"]
+            is_match = fs >= threshold
+
+            # Colour: matches in red-orange gradient, non-matches in gray
+            if is_match:
+                n_matches += 1
+                # gradient: threshold=gray → 1.0=red
+                t_  = (fs - threshold) / max(1.0 - threshold, 0.01)
+                r   = 255
+                g   = max(0, int(140 * (1 - t_)))
+                b   = 0
+                color = f"#{r:02x}{g:02x}{b:02x}"
+            else:
+                color = "#606060"
+
+            label_idx = cr["top_idx"][0]
+            features.append({
+                "type": "Feature",
+                "geometry": row.geometry.__geo_interface__,
+                "properties": {
+                    "final_score": fs,
+                    "sam2_sim":    sc["sam2_sim"],
+                    "clip_norm":   sc["clip_norm"],
+                    "label":       CLIP_LABELS[label_idx],
+                    "color":       color,
+                    "is_match":    is_match,
+                    "area_m2":     round(float(sc["mask"]["area"]), 1),
+                },
+            })
+
+        # Matches on top
+        features.sort(key=lambda f: (0 if f["properties"]["is_match"] else 1,
+                                     -f["properties"]["final_score"]))
+
+        west, south, east, north = _to_wgs84_bounds(original_bbox_rd)
         return {
-            "geojson": geojson,
-            "raster": {
-                "data":   "data:image/png;base64," + base64.b64encode(_prob_to_rgba(prob)).decode(),
-                "bounds": [[south, west], [north, east]],
-            },
+            "geojson": {"type": "FeatureCollection", "features": features},
+            "bounds":  [[south, west], [north, east]],
             "stats": {
-                "n_matches": len(records),
-                "max_sim":   round(float(prob.max()), 3),
+                "n_matches": n_matches,
+                "n_total":   len(features),
+                "max_score": round(max((f["properties"]["final_score"] for f in features), default=0.0), 3),
             },
             "reference_preview": ONE_SHOT_PREVIEW,
         }
@@ -1046,24 +988,6 @@ async def detect(req: DetectRequest) -> dict:
         logger.exception("Detection error")
         raise HTTPException(500, str(exc))
 
-
-@app.post("/api/segment")
-async def segment(req: SegmentRequest) -> dict:
-    if not MODEL_READY:
-        raise HTTPException(503, "Model loading — check /api/health and retry.")
-    loop = asyncio.get_event_loop()
-    try:
-        return await loop.run_in_executor(
-            concurrent.futures.ThreadPoolExecutor(max_workers=1),
-            _run_segmentation,
-            req.polygon_wgs84, req.text_prompts,
-            req.box_threshold, req.text_threshold, req.year_b,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Segmentation error")
-        raise HTTPException(500, str(exc))
 
 
 @app.post("/api/auto-segment")

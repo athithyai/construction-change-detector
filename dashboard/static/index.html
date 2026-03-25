@@ -94,9 +94,6 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 #status-bar.error { color: var(--danger); }
 #status-bar.ok    { color: var(--accent2); }
 
-/* Text prompts area */
-textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: .74rem; resize: vertical; }
-
 /* One-shot UI */
 #oneshot-section { display: none; }
 .oneshot-step { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
@@ -163,7 +160,6 @@ textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px s
     <div class="mode-tabs">
       <button class="mode-tab active" id="mode-seg"     onclick="setMode('seg')">📐 Auto Seg</button>
       <button class="mode-tab"        id="mode-det"     onclick="setMode('det')">🔥 Change</button>
-      <button class="mode-tab"        id="mode-text"    onclick="setMode('text')">✏ Text</button>
       <button class="mode-tab"        id="mode-oneshot" onclick="setMode('oneshot')">🎯 One-Shot</button>
     </div>
     <div style="margin-top:10px">
@@ -193,13 +189,6 @@ textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px s
              oninput="document.getElementById('ost-val').textContent=parseFloat(this.value).toFixed(2)"/>
       <span class="slider-val" id="ost-val">0.45</span>
     </div>
-  </div>
-
-  <!-- TEXT PROMPTS (text mode only) -->
-  <div class="section" id="text-prompts-section" style="display:none;">
-    <div class="section-title">Text Prompts (Grounding DINO)</div>
-    <textarea id="text-prompts" rows="3">crane . scaffolding . excavator . dump truck . building under construction . concrete mixer</textarea>
-    <div style="font-size:.68rem;color:var(--muted);margin-top:4px;">Separate with " . " — DINO format</div>
   </div>
 
   <!-- YEAR SELECTION -->
@@ -368,10 +357,9 @@ function setMode(m) {
   currentMode = m;
   document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
   document.getElementById(`mode-${m}`).classList.add('active');
-  document.getElementById('text-prompts-section').style.display  = m === 'text'    ? 'block' : 'none';
-  document.getElementById('oneshot-section').style.display       = m === 'oneshot' ? 'block' : 'none';
-  document.getElementById('run-section').style.display           = m === 'oneshot' ? 'none'  : 'block';
-  const labels = { seg: '▶ Auto Segment + Classify', det: '▶ Detect Changes (2022→2024)', text: '▶ Text-Guided SAM' };
+  document.getElementById('oneshot-section').style.display = m === 'oneshot' ? 'block' : 'none';
+  document.getElementById('run-section').style.display     = m === 'oneshot' ? 'none'  : 'block';
+  const labels = { seg: '▶ Auto Segment + Classify', det: '▶ Detect Changes (2022→2024)' };
   if (m !== 'oneshot') {
     document.getElementById('run-label').textContent = currentBbox ? labels[m] : 'Draw an area first';
     document.getElementById('draw-btn').textContent = '✏ Draw Area on Map';
@@ -394,12 +382,10 @@ function handleDrawBtn() { startDraw(); }
 
 function startDraw() {
   if (drawHandler) { drawHandler.disable(); drawHandler = null; }
-  const isPoly = currentMode === 'text';
   const opts = { shapeOptions: { color: '#58a6ff', weight: 2, fillOpacity: .07 } };
-  drawHandler = isPoly ? new L.Draw.Polygon(map, opts) : new L.Draw.Rectangle(map, opts);
+  drawHandler = new L.Draw.Rectangle(map, opts);
   drawHandler.enable();
-  const msg = isPoly ? '🖱 Click vertices on the map to draw polygon…' : '🖱 Drag a rectangle on the map…';
-  setDrawStatus(msg, 'active');
+  setDrawStatus('🖱 Drag a rectangle on the map…', 'active');
 }
 
 function startDrawRef() {
@@ -472,14 +458,10 @@ map.on(L.Draw.Event.CREATED, async e => {
 
   // Standard modes
   currentBbox = bbox;
-  if (currentMode === 'text') {
-    const ll = e.layer.getLatLngs()[0];
-    const coords = ll.map(p => [p.lng, p.lat]); coords.push(coords[0]);
-    currentPolygon = { type: 'Polygon', coordinates: [coords] };
-  } else { currentPolygon = null; }
+  currentPolygon = null;
 
   setDrawStatus('✓ Area selected — press Run', '');
-  const labels = { seg: 'Auto Segment + Classify', det: 'Detect Changes (2022→2024)', text: 'Text-Guided SAM' };
+  const labels = { seg: 'Auto Segment + Classify', det: 'Detect Changes (2022→2024)' };
   document.getElementById('run-label').textContent = labels[currentMode];
   document.getElementById('run-btn').disabled = false;
 });
@@ -497,7 +479,7 @@ async function runOneShotSearch() {
     const thr  = parseFloat(document.getElementById('oneshot-threshold').value);
     const data = await apiPost('/api/one-shot-search', { bbox_wgs84: currentBbox, year, threshold: thr });
     renderOneShot(data);
-    setStatus(`${data.stats.n_matches} matches · max similarity ${(data.stats.max_sim*100).toFixed(0)}%`, 'ok');
+    setStatus(`${data.stats.n_matches} matches · max similarity ${((data.stats.max_score||data.stats.max_sim||0)*100).toFixed(0)}%`, 'ok');
   } catch(err) {
     setStatus('Error: ' + err.message, 'error');
   } finally {
@@ -554,20 +536,6 @@ async function runAnalysis() {
       renderDetection(data);
       setStatus(`${data.stats.total} sites · max score ${(data.stats.max_prob*100).toFixed(0)}%`, 'ok');
 
-    } else if (currentMode === 'text') {
-      setStatus('Grounding DINO + SAM2 text-guided segmentation…');
-      const poly = currentPolygon || { type: 'Polygon', coordinates: [[
-        [currentBbox[0], currentBbox[1]], [currentBbox[2], currentBbox[1]],
-        [currentBbox[2], currentBbox[3]], [currentBbox[0], currentBbox[3]],
-        [currentBbox[0], currentBbox[1]]
-      ]]};
-      const data = await apiPost('/api/segment', {
-        polygon_wgs84: poly,
-        text_prompts: document.getElementById('text-prompts').value,
-        box_threshold: 0.20, text_threshold: 0.20, year_b: yearB,
-      });
-      renderTextSeg(data);
-      setStatus(`${data.stats.total} object(s) detected`, 'ok');
     }
   } catch (e) {
     setStatus('Error: ' + e.message, 'error');
@@ -592,7 +560,7 @@ function renderSegments(data) {
     style: f => {
       const col  = f.properties.color || '#888';
       const isC  = f.properties.is_construction;
-      return { color: col, weight: isC ? 2.5 : 1.5, fillColor: col, fillOpacity: isC ? 0.45 : 0.22, dashArray: isC ? null : '4,3' };
+      return { color: col, weight: isC ? 2.5 : 1.0, fillColor: col, fillOpacity: isC ? 0.65 : 0.40, dashArray: isC ? null : '4,3' };
     },
     onEachFeature: (f, layer) => {
       const p = f.properties;
@@ -613,12 +581,16 @@ function renderSegments(data) {
           </div>
         </div>
       `);
-      layer.on('mouseover', () => layer.setStyle({ fillOpacity: p.is_construction ? 0.75 : 0.5, weight: p.is_construction ? 3 : 2 }));
+      layer.on('mouseover', () => layer.setStyle({ fillOpacity: p.is_construction ? 0.85 : 0.65, weight: p.is_construction ? 3 : 2 }));
       layer.on('mouseout',  () => layer.resetStyle());
     }
   });
   if (showSeg) segmentLayer.addTo(map);
-  map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
+  if (data.bounds) {
+    map.fitBounds(data.bounds, { padding: [20, 20] });
+  } else {
+    map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
+  }
 
   document.getElementById('layer-toggles').style.display = 'flex';
   document.getElementById('tog-heat').style.display = 'none';
@@ -678,87 +650,71 @@ function renderDetection(data) {
     ]);
 }
 
-// ── Render: Text SAM ─────────────────────────────────────────────────────────
-function renderTextSeg(data) {
-  if (!data.geojson.features.length) {
-    showResults(0, 0, '—', '—', []);
-    setStatus(data.message || 'No objects found — try lower threshold or zoom in.', 'error');
+// ── Render: One-Shot ──────────────────────────────────────────────────────────
+function renderOneShot(data) {
+  if (!data.geojson || !data.geojson.features.length) {
+    setStatus('No matching segments found — try a lower threshold or different reference.', 'error');
     return;
   }
+
   segmentLayer = L.geoJSON(data.geojson, {
     style: f => {
-      const col = labelColor(f.properties.label);
-      return { color: col, weight: 2.5, fillColor: col, fillOpacity: 0.35 };
+      const col = f.properties.color || '#888888';
+      const score = f.properties.final_score || 0;
+      const isMatch = f.properties.is_match;
+      return {
+        color: col, weight: isMatch ? 2.5 : 0.8,
+        fillColor: col, fillOpacity: isMatch ? 0.65 : 0.35,
+      };
     },
     onEachFeature: (f, layer) => {
       const p = f.properties;
-      const col = labelColor(p.label);
+      const score = (p.final_score || 0) * 100;
+      const sam2  = (p.sam2_sim   || 0) * 100;
+      const clip  = (p.clip_score || 0) * 100;
+      const col   = p.color || '#888';
       layer.bindPopup(`
-        <b style="color:${col}">🏗 ${p.label}</b>
-        <table style="margin-top:6px;font-size:12px;">
-          <tr><td style="color:#888">DINO score</td><td>${(p.det_score*100).toFixed(1)}%</td></tr>
-          <tr><td style="color:#888">Proto score</td><td>${(p.proto_score*100).toFixed(1)}%</td></tr>
-          <tr><td style="color:#888">Area</td><td>${p.area_m2.toLocaleString()} m²</td></tr>
-        </table>
+        <div style="font-family:sans-serif;font-size:13px;min-width:200px;">
+          <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;">
+            <span style="width:12px;height:12px;border-radius:3px;background:${col};display:inline-block;flex-shrink:0;"></span>
+            <b style="color:${col}">${p.is_match ? '🎯 Match' : 'Non-match'}</b>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <tr><td style="color:#888">Final score</td><td><b>${score.toFixed(1)}%</b></td></tr>
+            <tr><td style="color:#888">SAM2 sim</td><td>${sam2.toFixed(1)}%</td></tr>
+            <tr><td style="color:#888">CLIP score</td><td>${clip.toFixed(1)}%</td></tr>
+            <tr><td style="color:#888">Label</td><td>${p.label || '—'}</td></tr>
+            <tr><td style="color:#888">Area</td><td>${p.area_m2 ? p.area_m2.toLocaleString() : '—'} m²</td></tr>
+          </table>
+        </div>
       `);
-      layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.65 }));
+      layer.on('mouseover', () => layer.setStyle({ fillOpacity: p.is_match ? 0.85 : 0.55, weight: p.is_match ? 3 : 1.5 }));
       layer.on('mouseout',  () => layer.resetStyle());
     }
   });
-  if (showSeg) segmentLayer.addTo(map);
-  map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
-  document.getElementById('layer-toggles').style.display = 'flex';
-  document.getElementById('tog-heat').style.display = 'none';
-  document.getElementById('opacity-row').style.display = 'none';
+  segmentLayer.addTo(map);
 
-  const types = data.stats.objects || {};
-  const top = Object.entries(types).sort((a,b)=>b[1]-a[1])[0];
-  showResults(data.stats.total, data.stats.total, top ? top[0] : '—',
-    data.stats.max_combined ? (data.stats.max_combined*100).toFixed(0)+'%' : '—',
-    Object.entries(types).map(([l,n]) => ({ label: l, count: n, color: labelColor(l) }))
-  );
-}
-
-// ── Render: One-Shot ──────────────────────────────────────────────────────────
-function renderOneShot(data) {
-  const bounds = data.raster.bounds;
-  heatmapLayer = L.imageOverlay(data.raster.data, L.latLngBounds(bounds[0], bounds[1]), { opacity: 0.65, zIndex: 400 });
-  heatmapLayer.addTo(map);
-
-  if (data.geojson.features.length > 0) {
-    segmentLayer = L.geoJSON(data.geojson, {
-      style: () => ({ color: '#a78bfa', weight: 2, fillColor: '#a78bfa', fillOpacity: 0.25 }),
-      onEachFeature: (f, layer) => {
-        const p = f.properties;
-        layer.bindPopup(`
-          <b style="color:#a78bfa">🎯 Similar patch</b>
-          <table style="margin-top:6px;font-size:12px;">
-            <tr><td style="color:#888">Similarity</td><td>${(p.similarity*100).toFixed(1)}%</td></tr>
-            <tr><td style="color:#888">Area</td><td>${p.area_m2 ? p.area_m2.toLocaleString() : '—'} m²</td></tr>
-          </table>
-        `);
-        layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.55 }));
-        layer.on('mouseout',  () => layer.resetStyle());
-      }
-    });
-    segmentLayer.addTo(map);
-    map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
+  if (data.bounds) {
+    map.fitBounds(data.bounds, { padding: [20, 20] });
   } else {
-    // Fit to heatmap bounds
-    map.fitBounds(L.latLngBounds(bounds[0], bounds[1]), { padding: [20, 20] });
+    map.fitBounds(segmentLayer.getBounds(), { padding: [30, 30] });
   }
 
-  // Show layer controls in results section
   document.getElementById('results-section').style.display = 'block';
   document.getElementById('stat-constr').textContent = data.stats.n_matches;
-  document.getElementById('stat-total').textContent  = data.stats.n_matches;
+  document.getElementById('stat-total').textContent  = data.stats.n_total || data.geojson.features.length;
   document.getElementById('stat-types').textContent  = 'similar';
-  document.getElementById('stat-score').textContent  = (data.stats.max_sim * 100).toFixed(0) + '%';
+  document.getElementById('stat-score').textContent  = ((data.stats.max_score || data.stats.max_sim || 0) * 100).toFixed(0) + '%';
   document.getElementById('label-list').innerHTML = `
     <div class="label-row">
-      <span class="label-dot" style="background:#a78bfa;"></span>
+      <span class="label-dot" style="background:#FF6600;"></span>
       <span class="label-name">SAM2 + CLIP similarity match</span>
       <span class="label-count">${data.stats.n_matches}</span>
+    </div>
+    <div class="label-row">
+      <span class="label-dot" style="background:#555;"></span>
+      <span class="label-name">Below threshold</span>
+      <span class="label-count">${(data.stats.n_total || data.geojson.features.length) - data.stats.n_matches}</span>
     </div>`;
 }
 
@@ -778,13 +734,6 @@ function showResults(constr, total, topType, score, labelItems) {
   document.getElementById('results-section').style.display = 'block';
 }
 
-// Legacy label→color for DINO text mode
-const DINO_COLORS = { 'crane':'#facc15','tower crane':'#facc15','scaffolding':'#fb923c','excavator':'#f87171','bulldozer':'#f87171','dump truck':'#a78bfa','concrete mixer':'#a78bfa','building under construction':'#34d399','construction site':'#34d399','foundation':'#818cf8' };
-function labelColor(label) {
-  for (const [k, v] of Object.entries(DINO_COLORS)) if (label.toLowerCase().includes(k)) return v;
-  return '#94a3b8';
-}
-
 function downloadGPKG() { window.location.href = '/api/download/results.gpkg'; }
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -798,7 +747,7 @@ async function checkHealth() {
   try {
     const d = await (await fetch('/api/health')).json();
     if (d.ready) {
-      setStatus(`Models ready · ${d.device} · SAM2 + CLIP + DINO + Depth`, 'ok');
+      setStatus(`Models ready · ${d.device} · SAM2 + CLIP + Depth`, 'ok');
       clearInterval(healthInterval);
     } else { setStatus('Loading SAM2 + CLIP + Depth models… (first load ~90 s)'); }
   } catch { setStatus('Connecting…'); }
