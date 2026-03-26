@@ -632,14 +632,10 @@ def _run_analyze_bbox(bbox_rd: tuple) -> dict:
         for year in (2022, 2024):
             ndbi[year] = _compute_ndbi(cir[year], target_hw) if cir[year] is not None else None
 
+        # Only send RGB overlays to frontend — derived overlays removed from UI
         overlays: dict[str, Optional[str]] = {}
         for year in (2022, 2024):
-            overlays[f"rgb_{year}"]   = _img_to_b64(rgb[year])   if rgb[year]  is not None else None
-            overlays[f"cir_{year}"]   = _img_to_b64(cir[year])   if cir[year]  is not None else None
-            overlays[f"ndvi_{year}"]  = _ndvi_to_overlay(ndvi[year])                if ndvi[year]   is not None else None
-            overlays[f"ndbi_{year}"]  = _ndbi_to_overlay(ndbi[year])                if ndbi[year]   is not None else None
-            overlays[f"nir_{year}"]   = _nir_to_overlay(cir[year], target_hw)       if cir[year]    is not None else None
-            overlays[f"depth_{year}"] = _depth_to_overlay(depth[year])              if depth[year]  is not None else None
+            overlays[f"rgb_{year}"] = _img_to_b64(rgb[year]) if rgb[year] is not None else None
 
         # ── 6. SAM2 dense auto-segment on 2024 ───────────────────────────────
         logger.info("SAM2 auto-segment 2024 (%dx%d) …", H, W)
