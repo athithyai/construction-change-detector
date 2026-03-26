@@ -116,10 +116,12 @@ def _load_model() -> None:
         from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
         SAM2_MASK_GEN = SAM2AutomaticMaskGenerator(
             model=SAM2_MODEL,
-            points_per_side=32,          # dense grid → full coverage
-            pred_iou_thresh=0.70,
-            stability_score_thresh=0.80,
-            min_mask_region_area=100,
+            points_per_side=32,           # dense grid → 1024 prompt points
+            pred_iou_thresh=0.65,         # lowered for better coverage
+            stability_score_thresh=0.75,  # lowered for fewer gaps
+            min_mask_region_area=80,
+            crop_n_layers=1,              # also segment at 2× crop scale
+            crop_n_points_downscale_factor=2,
         )
         logger.info("SAM2AutomaticMaskGenerator ready (32 pts/side).")
 
@@ -295,6 +297,33 @@ def _nir_to_overlay(cir_np: np.ndarray, target_hw: tuple) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+# ── NDBI ──────────────────────────────────────────────────────────────────────
+def _compute_ndbi(cir_np: np.ndarray, target_hw: tuple) -> np.ndarray:
+    """Proxy NDBI = (Red − NIR) / (Red + NIR + ε) from PDOK CIR channels.
+
+    High NDBI (near +1) → bare soil / built-up surface.
+    Low NDBI  (near −1) → dense vegetation (inverse of NDVI).
+    CIR layout: channel 0 = NIR, channel 1 = Red.
+    """
+    import cv2
+    nir  = cir_np[:, :, 0].astype(np.float32)
+    red  = cir_np[:, :, 1].astype(np.float32)
+    ndbi = (red - nir) / (red + nir + 1e-6)
+    H, W = target_hw
+    return cv2.resize(ndbi, (W, H), interpolation=cv2.INTER_LINEAR)
+
+
+def _ndbi_to_overlay(ndbi: np.ndarray) -> str:
+    """NDBI [−1,1] → RGBA PNG with RdBu_r colormap (red = built-up, blue = veg)."""
+    from matplotlib import cm
+    norm = np.clip((ndbi + 1.0) / 2.0, 0.0, 1.0)
+    rgba = (cm.get_cmap("RdBu_r")(norm) * 255).astype(np.uint8)
+    rgba[:, :, 3] = 210
+    buf = io.BytesIO()
+    Image.fromarray(rgba, "RGBA").save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
 # ── Depth ─────────────────────────────────────────────────────────────────────
 def _compute_depth(img_np: np.ndarray) -> Optional[np.ndarray]:
     """Depth Anything V2 Small → H×W float32 depth map normalised to [0, 1]."""
@@ -366,47 +395,73 @@ def _clip_classify_masks(img_np: np.ndarray, masks_data: list) -> list:
 # ── Construction score ────────────────────────────────────────────────────────
 def _construction_score(
     all_sims: list,
-    mean_ndvi: Optional[float],
-    depth_var: Optional[float],
+    ndvi_24: Optional[float],
+    ndvi_22: Optional[float],
+    depth_var_24: Optional[float],
+    depth_var_22: Optional[float] = None,
 ) -> float:
-    """Fuse NDVI + depth roughness + CLIP → construction probability [0, 1].
+    """Fuse multi-signal → construction probability [0, 1].
 
-    Scoring rationale
-    -----------------
-    * Low NDVI  (near 0 or negative)  → likely bare soil / construction
-    * High depth variance              → disturbed / irregular terrain
-    * CLIP similarity to constr labels → semantic confirmation
+    Signals
+    -------
+    * ndvi_abs:   Low NDVI in 2024 → bare/exposed (construction-like)
+    * ndvi_delta: NDVI decreased 2022→2024 → vegetation loss (new construction)
+    * roughness:  High depth variance → disturbed terrain.
+                  Suppressed when NDVI is high — tree canopy is also rough!
+    * clip_s:     CLIP semantic similarity to construction labels
     """
-    # 1. NDVI: score rises as NDVI drops below 0.2
-    if mean_ndvi is not None:
-        ndvi_s = float(np.clip((0.2 - mean_ndvi) / 0.5, 0.0, 1.0))
+    # 1. Absolute NDVI — bare soil in 2024
+    if ndvi_24 is not None:
+        ndvi_abs = float(np.clip((0.20 - ndvi_24) / 0.50, 0.0, 1.0))
     else:
-        ndvi_s = 0.3  # neutral when missing
+        ndvi_abs = 0.25
 
-    # 2. Depth roughness: variance stored ×1000; smooth~0, rough~25+
-    if depth_var is not None:
-        roughness = float(np.clip((depth_var / 1000.0) / 0.025, 0.0, 1.0))
+    # 2. Temporal NDVI delta — vegetation LOSS from 2022 → 2024
+    if ndvi_22 is not None and ndvi_24 is not None:
+        delta = ndvi_22 - ndvi_24           # positive = greening lost
+        ndvi_delta = float(np.clip(delta / 0.30, 0.0, 1.0))
     else:
-        roughness = 0.3
+        ndvi_delta = 0.0
 
-    # 3. CLIP: best score across construction + bare-soil labels, normalised
+    # 3. Depth roughness — suppressed for vegetated areas (tree canopy is rough)
+    if depth_var_24 is not None:
+        roughness_raw = float(np.clip((depth_var_24 / 1000.0) / 0.025, 0.0, 1.0))
+        # Penalise roughness score when NDVI is clearly high (vegetation > 0.25)
+        veg_supp = max(0.0, (ndvi_24 if ndvi_24 is not None else 0.0) - 0.25) * 3.0
+        roughness = roughness_raw * max(0.0, 1.0 - veg_supp)
+    else:
+        roughness = 0.2
+
+    # 4. CLIP semantic similarity
     if all_sims:
-        raw = max(all_sims[i] for i in _CONSTR_IDXS if i < len(all_sims))
+        raw    = max(all_sims[i] for i in _CONSTR_IDXS if i < len(all_sims))
         clip_s = float(np.clip((raw - 0.08) / 0.22, 0.0, 1.0))
     else:
         clip_s = 0.0
 
-    return round(0.40 * ndvi_s + 0.35 * roughness + 0.25 * clip_s, 3)
+    return round(0.25 * ndvi_abs + 0.30 * ndvi_delta + 0.20 * roughness + 0.25 * clip_s, 3)
 
 
 # ── Terrain label assignment ──────────────────────────────────────────────────
 def _assign_terrain_label(
     all_sims: list,
     construction_score: float,
-    mean_ndvi: Optional[float],
+    ndvi_24: Optional[float],
+    ndvi_22: Optional[float],
 ) -> str:
-    """Map fused scores → one of the 7 terrain classes."""
-    # Highest priority: strong construction signal
+    """Map fused scores → one of the 7 terrain classes.
+
+    Hard vegetation gate: if area is clearly green (high NDVI in 2024, or
+    green in BOTH years), it is labelled vegetation regardless of construction
+    score — prevents forests/parks from being mis-classified as construction.
+    """
+    # ── Hard vegetation gate ──────────────────────────────────────────────────
+    if ndvi_24 is not None and ndvi_24 > 0.35:
+        return "vegetation"
+    if (ndvi_22 is not None and ndvi_22 > 0.30) and (ndvi_24 is not None and ndvi_24 > 0.22):
+        return "vegetation"
+
+    # ── Strong construction signal ────────────────────────────────────────────
     if construction_score >= 0.60:
         return "likely construction terrain"
 
@@ -423,7 +478,7 @@ def _assign_terrain_label(
             return "roof / building"
         if paved_s > 0.22:
             return "paved surface"
-        if veg_s > 0.22 or (mean_ndvi is not None and mean_ndvi > 0.35):
+        if veg_s > 0.22 or (ndvi_24 is not None and ndvi_24 > 0.22):
             return "vegetation"
         if bare_s > 0.20 or construction_score >= 0.35:
             return "exposed soil / bare ground"
@@ -447,6 +502,19 @@ def _masks_to_gdf(masks_sorted: list, img_shape: tuple, tile_crs, tile_transform
     labeled = np.zeros((H, W), dtype=np.int32)
     for idx, m in enumerate(masks_sorted, start=1):
         labeled[m["segmentation"]] = idx
+
+    # Fill pixels not covered by any SAM mask via nearest-labelled-pixel
+    uncovered = labeled == 0
+    if uncovered.any():
+        try:
+            from scipy.ndimage import distance_transform_edt
+            _, (row_idx, col_idx) = distance_transform_edt(
+                uncovered, return_distances=True, return_indices=True
+            )
+            labeled[uncovered] = labeled[row_idx[uncovered], col_idx[uncovered]]
+            logger.info("  filled %d uncovered pixels via nearest-segment", int(uncovered.sum()))
+        except Exception as _fill_exc:
+            logger.warning("pixel fill skipped: %s", _fill_exc)
 
     polys_by_id: dict = {}
     for geom_j, val in rio_shapes(
@@ -559,12 +627,17 @@ def _run_analyze_bbox(bbox_rd: tuple) -> dict:
         logger.info("Depth: 2022=%s 2024=%s",
                     depth[2022] is not None, depth[2024] is not None)
 
-        # ── 5. Build imagery overlays (all cover bbox_rd_exp) ────────────────
+        # ── 5. Compute NDBI + build all imagery overlays ─────────────────────
+        ndbi: dict[int, Optional[np.ndarray]] = {}
+        for year in (2022, 2024):
+            ndbi[year] = _compute_ndbi(cir[year], target_hw) if cir[year] is not None else None
+
         overlays: dict[str, Optional[str]] = {}
         for year in (2022, 2024):
             overlays[f"rgb_{year}"]   = _img_to_b64(rgb[year])   if rgb[year]  is not None else None
             overlays[f"cir_{year}"]   = _img_to_b64(cir[year])   if cir[year]  is not None else None
             overlays[f"ndvi_{year}"]  = _ndvi_to_overlay(ndvi[year])                if ndvi[year]   is not None else None
+            overlays[f"ndbi_{year}"]  = _ndbi_to_overlay(ndbi[year])                if ndbi[year]   is not None else None
             overlays[f"nir_{year}"]   = _nir_to_overlay(cir[year], target_hw)       if cir[year]    is not None else None
             overlays[f"depth_{year}"] = _depth_to_overlay(depth[year])              if depth[year]  is not None else None
 
@@ -620,17 +693,25 @@ def _run_analyze_bbox(bbox_rd: tuple) -> dict:
                        if ndvi[2022] is not None else None)
             ndvi_24 = (round(_mask_mean(ndvi[2024], seg, target_hw), 3)
                        if ndvi[2024] is not None else None)
-            primary_ndvi = ndvi_24 if ndvi_24 is not None else ndvi_22
 
-            # Depth 2024
-            depth_mean = (round(_mask_mean(depth[2024], seg, target_hw), 3)
-                          if depth[2024] is not None else None)
-            depth_var  = (round(_depth_variance(depth[2024], seg, target_hw) * 1000, 3)
-                          if depth[2024] is not None else None)
+            # Depth mean + variance for both years
+            depth_mean   = (round(_mask_mean(depth[2024], seg, target_hw), 3)
+                            if depth[2024] is not None else None)
+            depth_var    = (round(_depth_variance(depth[2024], seg, target_hw) * 1000, 3)
+                            if depth[2024] is not None else None)
+            depth_var_22 = (round(_depth_variance(depth[2022], seg, target_hw) * 1000, 3)
+                            if depth[2022] is not None else None)
 
-            # Scores
-            cs      = _construction_score(cr.get("all_sims", []), primary_ndvi, depth_var)
-            terrain = _assign_terrain_label(cr.get("all_sims", []), cs, primary_ndvi)
+            # NDBI 2022 / 2024
+            ndbi_22 = (round(_mask_mean(ndbi[2022], seg, target_hw), 3)
+                       if ndbi[2022] is not None else None)
+            ndbi_24 = (round(_mask_mean(ndbi[2024], seg, target_hw), 3)
+                       if ndbi[2024] is not None else None)
+
+            # Scores — temporal-aware
+            cs      = _construction_score(cr.get("all_sims", []), ndvi_24, ndvi_22,
+                                          depth_var, depth_var_22)
+            terrain = _assign_terrain_label(cr.get("all_sims", []), cs, ndvi_24, ndvi_22)
             color   = TERRAIN_COLORS.get(terrain, "#666666")
             top3    = [{"label": CLIP_LABELS[i], "score": round(float(s), 3)}
                        for i, s in zip(cr["top_idx"], cr["top_scores"])]
@@ -641,6 +722,9 @@ def _run_analyze_bbox(bbox_rd: tuple) -> dict:
                 "color":              color,
                 "mean_ndvi_2022":     ndvi_22,
                 "mean_ndvi_2024":     ndvi_24,
+                "ndvi_delta":         round((ndvi_22 or 0.0) - (ndvi_24 or 0.0), 3),
+                "mean_ndbi_2022":     ndbi_22,
+                "mean_ndbi_2024":     ndbi_24,
                 "depth_mean":         depth_mean,
                 "depth_roughness":    depth_var,
                 "area_px":            int(mdata["area"]),

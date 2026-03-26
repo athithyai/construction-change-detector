@@ -1,844 +1,560 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>SamSpade — Construction Terrain Analysis</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
-<style>
-/* ── Reset & vars ─────────────────────────────────────────────────────────── */
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0d1117; --surf:#161b22; --surf2:#1c2128; --border:#30363d;
-  --accent:#58a6ff; --green:#3fb950; --orange:#f0883e; --red:#f85149;
-  --text:#e6edf3; --muted:#8b949e; --r:6px;
-}
-html,body{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--text);
-     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-     display:flex;flex-direction:row}
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>⬡ SamSpade</title>
 
-/* ── Sidebar — LEFT ───────────────────────────────────────────────────────── */
-#sidebar{
-  width:290px;min-width:290px;
-  background:var(--surf);border-right:1px solid var(--border);
-  display:flex;flex-direction:column;height:100vh;overflow:hidden;
-  z-index:500;
-}
-#sidebar header{
-  padding:11px 14px 9px;border-bottom:1px solid var(--border);
-  background:var(--bg);flex-shrink:0;
-}
-#sidebar header h1{font-size:1.05rem;font-weight:700;color:var(--accent)}
-#sidebar header p{font-size:.63rem;color:var(--muted);margin-top:2px;line-height:1.45}
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { theme:{ extend:{ colors:{ brand:'#FF4500' } } } }</script>
 
-/* ── Map — fills remaining space ─────────────────────────────────────────── */
-#map{flex:1;height:100vh;position:relative}
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 
-/* ── Sidebar scroll body ─────────────────────────────────────────────────── */
-#sb-body{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+  <style>
+    /* Leaflet overrides */
+    #map { position:relative; }
+    .leaflet-container { background:#1a1a2e; }
+    .leaflet-control-zoom a { background:#1f2937!important; color:#e5e7eb!important; border-color:#374151!important; }
+    .leaflet-draw-toolbar a { background-color:#1f2937!important; }
 
-/* ── Section ─────────────────────────────────────────────────────────────── */
-.sec{padding:10px 13px;border-bottom:1px solid var(--border)}
-.sec-title{font-size:.60rem;font-weight:700;letter-spacing:1.1px;
-           text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+    /* Opacity slider */
+    .lslider { -webkit-appearance:none; width:100%; height:3px; border-radius:2px; background:#4b5563; outline:none; cursor:pointer; }
+    .lslider::-webkit-slider-thumb { -webkit-appearance:none; width:12px; height:12px; border-radius:50%; background:#f97316; cursor:pointer; }
+    .lslider-row { display:none; padding-top:4px; }
+    .lrow:hover .lslider-row { display:block; }
 
-/* ── Buttons ─────────────────────────────────────────────────────────────── */
-.btn{display:block;width:100%;padding:9px 12px;border:none;border-radius:var(--r);
-     font-size:.82rem;font-weight:600;cursor:pointer;transition:filter .15s,opacity .15s}
-.btn-primary{background:var(--accent);color:#000}
-.btn-primary:hover:not(:disabled){filter:brightness(1.15)}
-.btn-success{background:var(--green);color:#000}
-.btn-success:hover:not(:disabled){filter:brightness(1.1)}
-.btn:disabled{opacity:.35;cursor:not-allowed}
-#run-btn{margin-top:7px}
-.spinner{display:none;width:12px;height:12px;border:2px solid rgba(0,0,0,.3);
-         border-top-color:#000;border-radius:50%;
-         animation:spin .5s linear infinite;vertical-align:middle;margin-right:6px}
-@keyframes spin{to{transform:rotate(360deg)}}
-#run-btn.loading .spinner{display:inline-block}
-#run-btn.loading{pointer-events:none;opacity:.7}
-#draw-hint{font-size:.69rem;color:var(--muted);text-align:center;
-           min-height:16px;margin-top:5px}
+    /* Gradient legend pills */
+    #grad-wrap { position:absolute; bottom:30px; right:10px; z-index:1000; display:flex; flex-direction:column; gap:5px; pointer-events:none; }
+    .gpill { background:rgba(17,24,39,.90); border:1px solid #374151; border-radius:6px; padding:5px 8px; min-width:140px; }
+    .gpill .gt { color:#9ca3af; font-size:10px; margin-bottom:3px; font-family:monospace; }
+    .gpill .gbar { height:7px; border-radius:3px; }
+    .gpill .glbls { display:flex; justify-content:space-between; color:#6b7280; font-size:9px; margin-top:2px; font-family:monospace; }
 
-/* ── QGIS Layer panel ────────────────────────────────────────────────────── */
-.layer-group{margin-bottom:2px}
-.layer-group-hdr{font-size:.58rem;font-weight:700;letter-spacing:1px;
-                 text-transform:uppercase;color:var(--muted);
-                 padding:6px 0 3px;border-bottom:1px solid var(--border);
-                 margin-bottom:2px;display:flex;align-items:center;gap:5px}
-.layer-group-hdr::before{content:'';display:block;width:3px;height:10px;
-                          border-radius:2px;background:var(--accent)}
+    /* Terrain legend */
+    #terrain-legend { position:absolute; bottom:30px; left:10px; z-index:1000; background:rgba(17,24,39,.90); border:1px solid #374151; border-radius:6px; padding:8px 10px; pointer-events:none; }
 
-/* Each layer row */
-.lrow{display:grid;grid-template-columns:22px 13px 1fr auto;
-      column-gap:6px;align-items:center;padding:4px 0;
-      border-bottom:1px solid rgba(48,54,61,.5);transition:opacity .2s}
-.lrow:last-child{border-bottom:none}
-.lrow[data-ready="false"]{opacity:.28;pointer-events:none}
-.lrow.off{opacity:.38}
-.lrow.off .leye{color:var(--muted) !important}
+    /* Popup */
+    .seg-popup { font-size:12px; min-width:210px; line-height:1.5; }
+    .seg-popup .ptitle { font-weight:700; font-size:13px; margin-bottom:5px; }
+    .seg-popup .pbar-bg { background:#e5e7eb; border-radius:3px; height:5px; margin-bottom:5px; }
+    .seg-popup .pbar-fg { border-radius:3px; height:5px; }
+    .seg-popup .pgrid { display:grid; grid-template-columns:1fr 1fr; gap:2px 8px; }
+    .seg-popup .plabel { color:#6b7280; font-size:10px; }
+    .seg-popup .pval { font-size:11px; font-weight:600; color:#111827; }
+    .seg-popup .pclip { font-size:10px; color:#374151; }
+    .seg-popup .pclip b { color:#111827; }
 
-/* Eye toggle */
-.leye{background:none;border:none;cursor:pointer;font-size:.85rem;
-      padding:1px;color:var(--text);line-height:1;transition:color .15s}
-.lrow.off .leye{filter:grayscale(1)}
-
-/* Color swatch */
-.lswatch{width:11px;height:11px;border-radius:2px;flex-shrink:0}
-
-/* Layer name */
-.lname{font-size:.72rem;color:var(--text);white-space:nowrap;
-        overflow:hidden;text-overflow:ellipsis}
-
-/* Opacity % label */
-.lopac{font-size:.60rem;color:var(--muted);text-align:right;min-width:28px}
-
-/* Opacity slider — spans full width on second row */
-.lslider-row{grid-column:2/-1;margin-top:1px;padding-bottom:2px}
-.lslider{width:100%;accent-color:var(--accent);height:3px;cursor:pointer}
-
-/* Base imagery radio rows */
-.bradio{display:flex;align-items:center;gap:7px;padding:5px 0;
-        border-bottom:1px solid rgba(48,54,61,.5);cursor:pointer}
-.bradio:last-child{border-bottom:none}
-.bradio input[type=radio]{accent-color:var(--accent);cursor:pointer}
-.bradio .bname{font-size:.73rem;flex:1}
-.bradio .btag{font-size:.58rem;color:var(--muted)}
-.bradio[data-ready="false"]{opacity:.28;pointer-events:none}
-
-/* ── Stats ────────────────────────────────────────────────────────────────── */
-.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px}
-.stat{background:var(--bg);border:1px solid var(--border);
-      border-radius:var(--r);padding:8px 10px}
-.stat .val{font-size:1.2rem;font-weight:700}
-.stat .lbl{font-size:.60rem;color:var(--muted);margin-top:2px}
-.s-constr .val{color:#FF4500}
-.s-total  .val{color:var(--accent)}
-#label-list{margin-top:7px}
-.llrow{display:flex;align-items:center;gap:6px;padding:3px 0;
-       border-bottom:1px solid var(--border);font-size:.71rem}
-.llrow:last-child{border-bottom:none}
-.lldot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
-.llname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.llcnt{color:var(--muted);font-size:.65rem}
-
-/* ── Status bar ─────────────────────────────────────────────────────────────*/
-#status-bar{flex-shrink:0;padding:8px 13px;font-size:.67rem;color:var(--muted);
-            border-top:1px solid var(--border);background:var(--bg)}
-#status-bar.ok{color:var(--green)}
-#status-bar.error{color:var(--red)}
-
-/* ── Map HUD pills ───────────────────────────────────────────────────────── */
-.hud-pill{position:absolute;z-index:800;
-          background:rgba(13,17,23,.90);border:1px solid var(--border);
-          border-radius:20px;padding:5px 13px;
-          font-size:.71rem;font-weight:600;backdrop-filter:blur(4px);
-          pointer-events:none;white-space:nowrap}
-#badge-layer{bottom:30px;left:12px;color:var(--accent)}
-#bt2022-pill{top:13px;left:50%;transform:translateX(-50%);
-             color:var(--orange);border-color:var(--orange);
-             cursor:pointer;pointer-events:auto;transition:all .15s}
-#bt2022-pill:hover{background:rgba(240,136,62,.12)}
-#bt2022-pill.off{border-color:var(--border);color:var(--muted)}
-
-/* ── Map legend ─────────────────────────────────────────────────────────── */
-.map-legend{background:rgba(13,17,23,.93);border:1px solid var(--border);
-            border-radius:var(--r);padding:9px 11px;font-size:.68rem;
-            color:var(--text);min-width:145px;backdrop-filter:blur(4px)}
-.map-legend .lt{font-weight:700;font-size:.70rem;color:var(--accent);margin-bottom:6px}
-.lr{display:flex;align-items:center;gap:5px;padding:2px 0}
-.ls{width:10px;height:10px;border-radius:2px;flex-shrink:0}
-
-/* ── Gradient legend pills ───────────────────────────────────────────────── */
-#grad-wrap{position:absolute;bottom:30px;right:10px;z-index:800;
-           display:none;flex-direction:column;gap:5px;pointer-events:none}
-.gpill{background:rgba(13,17,23,.91);border:1px solid var(--border);
-       border-radius:var(--r);padding:6px 10px;font-size:.64rem}
-.gpill .gt{font-weight:600;color:var(--accent);margin-bottom:3px}
-.gbar{height:7px;border-radius:3px;margin-bottom:3px}
-.glbls{display:flex;justify-content:space-between;color:var(--muted)}
-
-/* ── Segment popup ─────────────────────────────────────────────────────── */
-.spop{font-family:sans-serif;font-size:12.5px;min-width:230px;max-width:280px}
-.spop-hdr{display:flex;align-items:center;gap:7px;margin-bottom:7px}
-.spop-dot{width:12px;height:12px;border-radius:3px;flex-shrink:0}
-.spop-lbl{font-weight:700;font-size:13px}
-.score-bar{height:6px;border-radius:3px;margin-bottom:9px;
-           background:linear-gradient(to right,#1c2128,#FF4500);position:relative}
-.score-pin{position:absolute;top:-3px;width:12px;height:12px;
-           border-radius:50%;background:#fff;border:2px solid #FF4500;
-           transform:translateX(-50%)}
-.spop table{width:100%;border-collapse:collapse}
-.spop td{padding:2px 0;vertical-align:top}
-.spop td:first-child{color:#8b949e;font-size:11px;padding-right:8px;white-space:nowrap}
-.spop .sdiv{border-top:1px solid #30363d;padding:3px 0 0}
-.clip-row{font-size:11px;color:#8b949e;padding:1px 0}
-.clip-row span{color:#c9d1d9}
-</style>
+    /* Scrollbar */
+    ::-webkit-scrollbar { width:4px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:#374151; border-radius:2px; }
+    details summary::-webkit-details-marker { display:none; }
+  </style>
 </head>
-<body>
 
-<!-- ══════════════ SIDEBAR (LEFT) ══════════════ -->
-<div id="sidebar">
-  <header>
-    <h1>⬡ SamSpade</h1>
-    <p>SAM2 · CLIP · NDVI · NIR · Depth<br>Construction-terrain analysis</p>
-  </header>
+<body class="flex h-screen bg-gray-950 overflow-hidden">
 
-  <div id="sb-body">
+<!-- ══════════ SIDEBAR (left) ══════════ -->
+<aside class="w-72 min-w-[288px] bg-gray-900 border-r border-gray-700 flex flex-col overflow-hidden">
 
-    <!-- ── Draw & Run ── -->
-    <div class="sec">
-      <div class="sec-title">Area Selection</div>
-      <button class="btn btn-primary" id="draw-btn" onclick="startDraw()">✏ Draw bbox on map</button>
-      <div id="draw-hint">← drag a rectangle over the Netherlands</div>
-      <button class="btn btn-success" id="run-btn" onclick="runAnalysis()" disabled>
-        <span class="spinner"></span>
-        <span id="run-label">Draw an area first</span>
+  <!-- Header -->
+  <div class="px-4 py-3 border-b border-gray-700 flex items-center gap-2 shrink-0">
+    <span class="text-2xl leading-none">⬡</span>
+    <div>
+      <div class="text-white font-bold text-sm tracking-wide">SamSpade</div>
+      <div class="text-gray-400 text-xs">Construction terrain · Netherlands</div>
+    </div>
+  </div>
+
+  <!-- Scrollable body -->
+  <div class="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
+
+    <!-- Draw + Analyze -->
+    <div class="space-y-2">
+      <button id="btn-draw" onclick="startDraw()"
+        class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium transition-colors cursor-pointer">
+        ✏ Draw bbox on map
       </button>
+      <button id="btn-analyze" onclick="runAnalyze()"
+        class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-orange-600 hover:bg-orange-500 text-white text-sm font-bold transition-colors cursor-pointer">
+        ▶ Analyze Area
+      </button>
+      <div id="progress-msg" class="text-gray-400 text-xs text-center hidden"></div>
     </div>
 
-    <!-- ══ LAYER PANEL (QGIS style) ══ -->
-    <div class="sec">
-      <div class="sec-title">Layers</div>
-
-      <!-- ── Analysis layers ── -->
-      <div class="layer-group">
-        <div class="layer-group-hdr">Analysis</div>
-
-        <div class="lrow" id="lr-construction" data-ready="false">
-          <button class="leye" onclick="toggleLayer('construction')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:#FF4500"></span>
-          <span class="lname">Construction terrain</span>
-          <span class="lopac" id="lo-construction">72%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.72"
-                   oninput="setLayerOpacity('construction',this.value)">
-          </div>
-        </div>
-
-        <div class="lrow" id="lr-segments" data-ready="false">
-          <button class="leye" onclick="toggleLayer('segments')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:var(--accent)"></span>
-          <span class="lname">All SAM segments</span>
-          <span class="lopac" id="lo-segments">50%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.50"
-                   oninput="setLayerOpacity('segments',this.value)">
-          </div>
-        </div>
-
-        <div class="lrow" id="lr-bt2022" data-ready="false">
-          <button class="leye" onclick="toggleLayer('bt2022')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:var(--orange);border:1px dashed var(--orange)"></span>
-          <span class="lname">2022 reference sites</span>
-          <span class="lopac" id="lo-bt2022">80%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.80"
-                   oninput="setLayerOpacity('bt2022',this.value)">
-          </div>
-        </div>
-      </div>
-
-      <!-- ── Derived overlays ── -->
-      <div class="layer-group" style="margin-top:6px">
-        <div class="layer-group-hdr">Derived Overlays</div>
-
-        <div class="lrow off" id="lr-ndvi-2024" data-ready="false">
-          <button class="leye" onclick="toggleLayer('ndvi_2024')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:linear-gradient(to right,#d73027,#fee08b,#1a9850)"></span>
-          <span class="lname">NDVI 2024</span>
-          <span class="lopac" id="lo-ndvi-2024">75%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75"
-                   oninput="setLayerOpacity('ndvi_2024',this.value)">
-          </div>
-        </div>
-
-        <div class="lrow off" id="lr-ndvi-2022" data-ready="false">
-          <button class="leye" onclick="toggleLayer('ndvi_2022')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:linear-gradient(to right,#d73027,#fee08b,#1a9850)"></span>
-          <span class="lname">NDVI 2022</span>
-          <span class="lopac" id="lo-ndvi-2022">75%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75"
-                   oninput="setLayerOpacity('ndvi_2022',this.value)">
-          </div>
-        </div>
-
-        <div class="lrow off" id="lr-nir-2024" data-ready="false">
-          <button class="leye" onclick="toggleLayer('nir_2024')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:linear-gradient(to right,#f7fcf5,#41ab5d,#00441b)"></span>
-          <span class="lname">NIR 2024</span>
-          <span class="lopac" id="lo-nir-2024">75%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75"
-                   oninput="setLayerOpacity('nir_2024',this.value)">
-          </div>
-        </div>
-
-        <div class="lrow off" id="lr-nir-2022" data-ready="false">
-          <button class="leye" onclick="toggleLayer('nir_2022')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:linear-gradient(to right,#f7fcf5,#41ab5d,#00441b)"></span>
-          <span class="lname">NIR 2022</span>
-          <span class="lopac" id="lo-nir-2022">75%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75"
-                   oninput="setLayerOpacity('nir_2022',this.value)">
-          </div>
-        </div>
-
-        <div class="lrow off" id="lr-depth-2024" data-ready="false">
-          <button class="leye" onclick="toggleLayer('depth_2024')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:linear-gradient(to right,#000004,#8c2981,#fcfdbf)"></span>
-          <span class="lname">Depth 2024</span>
-          <span class="lopac" id="lo-depth-2024">75%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75"
-                   oninput="setLayerOpacity('depth_2024',this.value)">
-          </div>
-        </div>
-
-        <div class="lrow off" id="lr-depth-2022" data-ready="false">
-          <button class="leye" onclick="toggleLayer('depth_2022')" title="Toggle">👁</button>
-          <span class="lswatch" style="background:linear-gradient(to right,#000004,#8c2981,#fcfdbf)"></span>
-          <span class="lname">Depth 2022</span>
-          <span class="lopac" id="lo-depth-2022">75%</span>
-          <div class="lslider-row">
-            <input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75"
-                   oninput="setLayerOpacity('depth_2022',this.value)">
-          </div>
-        </div>
-      </div>
-
-      <!-- ── Base Imagery (radio) ── -->
-      <div class="layer-group" style="margin-top:6px">
-        <div class="layer-group-hdr">Base Imagery</div>
-
-        <label class="bradio" id="br-pdok">
-          <input type="radio" name="base" value="pdok" checked onchange="setBase('pdok')">
-          <span class="bname">Live PDOK tile</span>
-          <span class="btag">live</span>
-        </label>
-        <label class="bradio" id="br-rgb-2024" data-ready="false">
-          <input type="radio" name="base" value="rgb_2024" onchange="setBase('rgb_2024')">
-          <span class="bname">RGB 2024</span>
-          <span class="btag">8 cm</span>
-        </label>
-        <label class="bradio" id="br-cir-2024" data-ready="false">
-          <input type="radio" name="base" value="cir_2024" onchange="setBase('cir_2024')">
-          <span class="bname">CIR 2024</span>
-          <span class="btag">R=NIR G=Red B=Grn</span>
-        </label>
-        <label class="bradio" id="br-rgb-2022" data-ready="false">
-          <input type="radio" name="base" value="rgb_2022" onchange="setBase('rgb_2022')">
-          <span class="bname">RGB 2022</span>
-          <span class="btag">8 cm</span>
-        </label>
-        <label class="bradio" id="br-cir-2022" data-ready="false">
-          <input type="radio" name="base" value="cir_2022" onchange="setBase('cir_2022')">
-          <span class="bname">CIR 2022</span>
-          <span class="btag">R=NIR G=Red B=Grn</span>
-        </label>
-      </div>
-    </div><!-- /layers sec -->
-
-    <!-- ── Results ── -->
-    <div class="sec" id="results-sec" style="display:none">
-      <div class="sec-title">Results</div>
-      <div class="stats-grid">
-        <div class="stat s-constr">
-          <div class="val" id="stat-constr">0</div>
-          <div class="lbl">Construction</div>
-        </div>
-        <div class="stat s-total">
-          <div class="val" id="stat-total">0</div>
-          <div class="lbl">Segments</div>
-        </div>
-      </div>
-      <div id="label-list"></div>
-      <button class="btn btn-success" style="margin-top:9px" onclick="downloadGPKG()">
+    <!-- Stats panel -->
+    <div id="stats-panel" class="hidden bg-gray-800 rounded-lg p-3">
+      <div class="text-gray-300 text-xs font-semibold uppercase tracking-wider mb-2">Results</div>
+      <div id="stats-content" class="space-y-1 text-xs text-gray-300"></div>
+      <button onclick="downloadGpkg()"
+        class="w-full mt-2 px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs font-medium transition-colors cursor-pointer">
         ⬇ Download GeoPackage
       </button>
     </div>
 
-  </div><!-- /sb-body -->
+    <!-- ── Analysis Layers ── -->
+    <details open>
+      <summary class="flex items-center justify-between py-1.5 cursor-pointer text-gray-400 hover:text-gray-200 text-xs font-semibold uppercase tracking-wider select-none">
+        <span>Analysis Layers</span><span class="text-gray-500 text-base">›</span>
+      </summary>
+      <div class="mt-1 space-y-0.5">
 
-  <div id="status-bar">Initialising models…</div>
-</div>
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-segments" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('segments')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:#22BB44;border:1.5px solid #22BB44;opacity:.7"></span>
+            <span class="text-gray-300 text-xs flex-1">SAM Segments</span>
+            <span class="text-gray-500 text-xs" id="lo-segments">50%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.5" oninput="setLayerOpacity('segments',this.value)"></div>
+        </div>
 
-<!-- ══════════════ MAP ══════════════ -->
-<div id="map">
-  <div class="hud-pill" id="badge-layer">📡 Live PDOK</div>
-  <div class="hud-pill" id="bt2022-pill" onclick="toggleLayer('bt2022')">
-    🟠 2022 construction sites
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-construction" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('construction')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:#FF4500;border:1.5px solid #FF4500"></span>
+            <span class="text-gray-300 text-xs flex-1">Construction only</span>
+            <span class="text-gray-500 text-xs" id="lo-construction">72%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.72" oninput="setLayerOpacity('construction',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-bt2022" data-ready="true">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('bt2022')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:transparent;border:2px dashed #FFA500"></span>
+            <span class="text-gray-300 text-xs flex-1">BT2022 ref sites</span>
+            <span class="text-gray-500 text-xs" id="lo-bt2022">80%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.8" oninput="setLayerOpacity('bt2022',this.value)"></div>
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── Derived Overlays ── -->
+    <details open>
+      <summary class="flex items-center justify-between py-1.5 cursor-pointer text-gray-400 hover:text-gray-200 text-xs font-semibold uppercase tracking-wider select-none">
+        <span>Derived Overlays</span><span class="text-gray-500 text-base">›</span>
+      </summary>
+      <div class="mt-1 space-y-0.5">
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-ndvi-2022" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('ndvi_2022')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#d73027,#ffffbf,#1a9850)"></span>
+            <span class="text-gray-300 text-xs flex-1">NDVI 2022</span>
+            <span class="text-gray-500 text-xs" id="lo-ndvi-2022">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('ndvi_2022',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-ndvi-2024" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('ndvi_2024')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#d73027,#ffffbf,#1a9850)"></span>
+            <span class="text-gray-300 text-xs flex-1">NDVI 2024</span>
+            <span class="text-gray-500 text-xs" id="lo-ndvi-2024">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('ndvi_2024',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-ndbi-2022" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('ndbi_2022')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#2166ac,#f7f7f7,#d6604d)"></span>
+            <span class="text-gray-300 text-xs flex-1">NDBI 2022</span>
+            <span class="text-gray-500 text-xs" id="lo-ndbi-2022">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('ndbi_2022',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-ndbi-2024" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('ndbi_2024')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#2166ac,#f7f7f7,#d6604d)"></span>
+            <span class="text-gray-300 text-xs flex-1">NDBI 2024</span>
+            <span class="text-gray-500 text-xs" id="lo-ndbi-2024">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('ndbi_2024',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-nir-2022" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('nir_2022')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#ffffe5,#31a354)"></span>
+            <span class="text-gray-300 text-xs flex-1">NIR 2022</span>
+            <span class="text-gray-500 text-xs" id="lo-nir-2022">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('nir_2022',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-nir-2024" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('nir_2024')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#ffffe5,#31a354)"></span>
+            <span class="text-gray-300 text-xs flex-1">NIR 2024</span>
+            <span class="text-gray-500 text-xs" id="lo-nir-2024">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('nir_2024',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-depth-2022" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('depth_2022')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#0d0221,#f9a30c,#fcffa4)"></span>
+            <span class="text-gray-300 text-xs flex-1">Depth 2022</span>
+            <span class="text-gray-500 text-xs" id="lo-depth-2022">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('depth_2022',this.value)"></div>
+        </div>
+
+        <div class="lrow flex flex-col px-1 py-1.5 rounded hover:bg-gray-800 cursor-pointer" id="lr-depth-2024" data-ready="false">
+          <div class="flex items-center gap-2">
+            <button onclick="toggleLayer('depth_2024')" class="leye w-6 h-6 flex items-center justify-center text-base" style="opacity:.35">👁</button>
+            <span class="w-4 h-4 rounded-sm shrink-0" style="background:linear-gradient(to right,#0d0221,#f9a30c,#fcffa4)"></span>
+            <span class="text-gray-300 text-xs flex-1">Depth 2024</span>
+            <span class="text-gray-500 text-xs" id="lo-depth-2024">75%</span>
+          </div>
+          <div class="lslider-row px-8"><input type="range" class="lslider" min="0" max="1" step="0.05" value="0.75" oninput="setLayerOpacity('depth_2024',this.value)"></div>
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── Base Imagery ── -->
+    <details open>
+      <summary class="flex items-center justify-between py-1.5 cursor-pointer text-gray-400 hover:text-gray-200 text-xs font-semibold uppercase tracking-wider select-none">
+        <span>Base Imagery</span><span class="text-gray-500 text-base">›</span>
+      </summary>
+      <div class="mt-1 space-y-0.5">
+
+        <label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-800 cursor-pointer">
+          <input type="radio" name="base" value="pdok" class="accent-orange-500" onchange="setBase('pdok')" checked>
+          <span class="text-gray-300 text-xs flex-1">Live PDOK</span>
+          <span class="text-gray-500 text-xs">WMS</span>
+        </label>
+        <label id="br-rgb-2022" class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-800 cursor-pointer opacity-40 pointer-events-none">
+          <input type="radio" name="base" value="rgb_2022" class="accent-orange-500" onchange="setBase('rgb_2022')">
+          <span class="text-gray-300 text-xs flex-1">RGB 2022</span>
+          <span class="text-gray-500 text-xs">8 cm</span>
+        </label>
+        <label id="br-cir-2022" class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-800 cursor-pointer opacity-40 pointer-events-none">
+          <input type="radio" name="base" value="cir_2022" class="accent-orange-500" onchange="setBase('cir_2022')">
+          <span class="text-gray-300 text-xs flex-1">CIR 2022</span>
+          <span class="text-gray-500 text-xs">IR</span>
+        </label>
+        <label id="br-rgb-2024" class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-800 cursor-pointer opacity-40 pointer-events-none">
+          <input type="radio" name="base" value="rgb_2024" class="accent-orange-500" onchange="setBase('rgb_2024')">
+          <span class="text-gray-300 text-xs flex-1">RGB 2024</span>
+          <span class="text-gray-500 text-xs">8 cm</span>
+        </label>
+        <label id="br-cir-2024" class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-800 cursor-pointer opacity-40 pointer-events-none">
+          <input type="radio" name="base" value="cir_2024" class="accent-orange-500" onchange="setBase('cir_2024')">
+          <span class="text-gray-300 text-xs flex-1">CIR 2024</span>
+          <span class="text-gray-500 text-xs">IR</span>
+        </label>
+
+      </div>
+    </details>
+
+  </div><!-- end scrollable -->
+
+  <!-- Status bar -->
+  <div class="shrink-0 px-3 py-2 border-t border-gray-700">
+    <div id="status-bar" class="text-xs text-gray-500">⏳ Models loading…</div>
   </div>
+
+</aside>
+
+<!-- ══════════ MAP ══════════ -->
+<div id="map" class="flex-1 h-screen">
+
+  <!-- Gradient legend pills — bottom-right inside map -->
   <div id="grad-wrap">
     <div class="gpill" id="gp-ndvi" style="display:none">
-      <div class="gt">NDVI</div>
-      <div class="gbar" style="background:linear-gradient(to right,#d73027,#fc8d59,#fee08b,#91cf60,#1a9850)"></div>
-      <div class="glbls"><span>−1 bare</span><span>+1 veg</span></div>
+      <div class="gt">NDVI (RdYlGn)</div>
+      <div class="gbar" style="background:linear-gradient(to right,#d73027,#fc8d59,#fee08b,#ffffbf,#d9ef8b,#91cf60,#1a9850)"></div>
+      <div class="glbls"><span>−1 bare</span><span>0</span><span>+1 veg</span></div>
+    </div>
+    <div class="gpill" id="gp-ndbi" style="display:none">
+      <div class="gt">NDBI proxy (RdBu_r)</div>
+      <div class="gbar" style="background:linear-gradient(to right,#2166ac,#92c5de,#f7f7f7,#f4a582,#d6604d)"></div>
+      <div class="glbls"><span>−1 veg</span><span>0</span><span>+1 built</span></div>
     </div>
     <div class="gpill" id="gp-nir" style="display:none">
-      <div class="gt">NIR</div>
-      <div class="gbar" style="background:linear-gradient(to right,#f7fcf5,#74c476,#00441b)"></div>
-      <div class="glbls"><span>low</span><span>high (veg)</span></div>
+      <div class="gt">NIR (YlGn)</div>
+      <div class="gbar" style="background:linear-gradient(to right,#ffffe5,#addd8e,#31a354)"></div>
+      <div class="glbls"><span>low</span><span>high NIR</span></div>
     </div>
     <div class="gpill" id="gp-depth" style="display:none">
-      <div class="gt">Depth</div>
-      <div class="gbar" style="background:linear-gradient(to right,#000004,#3b0f70,#8c2981,#de4968,#fe9f6d,#fcfdbf)"></div>
+      <div class="gt">Depth (inferno)</div>
+      <div class="gbar" style="background:linear-gradient(to right,#0d0221,#b5367a,#f9a30c,#fcffa4)"></div>
       <div class="glbls"><span>near</span><span>far</span></div>
     </div>
   </div>
+
+  <!-- Terrain legend — bottom-left inside map -->
+  <div id="terrain-legend">
+    <div style="color:#9ca3af;font-size:11px;font-weight:600;margin-bottom:6px">Terrain class</div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:3px;background:#FF4500;flex-shrink:0"></div><span style="color:#d1d5db;font-size:11px">construction</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:3px;background:#CD853F;flex-shrink:0"></div><span style="color:#d1d5db;font-size:11px">bare soil</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:3px;background:#22BB44;flex-shrink:0"></div><span style="color:#d1d5db;font-size:11px">vegetation</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:3px;background:#1E90FF;flex-shrink:0"></div><span style="color:#d1d5db;font-size:11px">water</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:3px;background:#9370DB;flex-shrink:0"></div><span style="color:#d1d5db;font-size:11px">roof / building</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:3px;background:#778899;flex-shrink:0"></div><span style="color:#d1d5db;font-size:11px">paved</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:3px;background:#505060;flex-shrink:0"></div><span style="color:#d1d5db;font-size:11px">unknown</span></div>
+    </div>
+  </div>
+
 </div>
 
-<!-- ══════════════ SCRIPTS ══════════════ -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<!-- ══════════ JAVASCRIPT ══════════ -->
 <script>
-'use strict';
+// ── Map init ──────────────────────────────────────────────────────────────────
+const map = L.map('map',{zoomControl:true,preferCanvas:false}).setView([52.15,5.28],8);
 
-// ── Terrain colours ───────────────────────────────────────────────────────────
-const TERRAIN_COLORS = {
-  "likely construction terrain": "#FF4500",
-  "exposed soil / bare ground":  "#CD853F",
-  "vegetation":                  "#22BB44",
-  "water":                       "#1E90FF",
-  "roof / building":             "#9370DB",
-  "paved surface":               "#778899",
-  "shadow / unknown":            "#505060",
-};
+const PDOK_LAYER = L.tileLayer(
+  'https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:3857/{z}/{x}/{y}.png',
+  {maxZoom:20,attribution:'© PDOK / Kadaster'}
+).addTo(map);
 
-// ── Map ───────────────────────────────────────────────────────────────────────
-const map = L.map('map', { center:[52.25,5.30], zoom:9, zoomControl:true });
-
-const PDOK_WMS = 'https://service.pdok.nl/hwh/luchtfotorgb/wms/v1_0';
-const wmsOpts  = { format:'image/jpeg', transparent:false, version:'1.3.0', maxZoom:21 };
-const WMS_PDOK = L.tileLayer.wms(PDOK_WMS,
-  { ...wmsOpts, layers:'Actueel_ortho25', attribution:'© PDOK' });
-WMS_PDOK.addTo(map);
-
-// ── Terrain class legend ──────────────────────────────────────────────────────
-L.Control.extend({
-  options:{ position:'bottomright' },
-  onAdd(){
-    const d = L.DomUtil.create('div','map-legend');
-    d.innerHTML = `<div class="lt">Terrain Classes</div>`+
-      Object.entries(TERRAIN_COLORS).map(([lbl,col])=>
-        `<div class="lr">
-          <span class="ls" style="background:${col};${lbl==='likely construction terrain'?'box-shadow:0 0 0 1.5px rgba(255,255,255,.5)':''}"></span>
-          <span style="${lbl==='likely construction terrain'?'font-weight:700':''}">${lbl}</span>
-        </div>`
-      ).join('');
-    L.DomEvent.disableClickPropagation(d);
-    return d;
-  }
-}).prototype.initialize = function(){};
-const TL = L.Control.extend({
-  options:{position:'bottomright'},
-  onAdd(){
-    const d=L.DomUtil.create('div','map-legend');
-    d.innerHTML=`<div class="lt">Terrain Classes</div>`+
-      Object.entries(TERRAIN_COLORS).map(([lbl,col])=>
-        `<div class="lr">
-          <span class="ls" style="background:${col}"></span>
-          <span style="font-size:.67rem;${lbl==='likely construction terrain'?'font-weight:700':''}">${lbl}</span>
-        </div>`).join('');
-    L.DomEvent.disableClickPropagation(d);
-    return d;
-  }
+const drawLayer   = new L.FeatureGroup().addTo(map);
+const drawControl = new L.Control.Draw({
+  draw:{rectangle:true,polygon:false,polyline:false,marker:false,circle:false,circlemarker:false},
+  edit:{featureGroup:drawLayer}
 });
-new TL().addTo(map);
+map.addControl(drawControl);
+
+let drawnBbox = null;
+map.on(L.Draw.Event.CREATED, e => {
+  drawLayer.clearLayers();
+  drawLayer.addLayer(e.layer);
+  drawnBbox = e.layer.getBounds();
+});
 
 // ── Layer state ───────────────────────────────────────────────────────────────
-// Leaflet layer objects — null until data arrives
 const L_OBJ = {
-  construction: null, segments: null, bt2022: null,
-  ndvi_2022:null, ndvi_2024:null, nir_2022:null, nir_2024:null,
-  depth_2022:null, depth_2024:null,
-  rgb_2022:null, cir_2022:null, rgb_2024:null, cir_2024:null,
+  construction:null,segments:null,bt2022:null,
+  ndvi_2022:null,ndvi_2024:null,
+  ndbi_2022:null,ndbi_2024:null,
+  nir_2022:null, nir_2024:null,
+  depth_2022:null,depth_2024:null,
+  rgb_2022:null,cir_2022:null,rgb_2024:null,cir_2024:null,
 };
-
-// Visibility state (what the user wants shown)
 const L_VIS = {
-  construction:true, segments:true, bt2022:true,
-  ndvi_2022:false, ndvi_2024:false, nir_2022:false, nir_2024:false,
-  depth_2022:false, depth_2024:false,
+  construction:true,segments:true,bt2022:true,
+  ndvi_2022:false,ndvi_2024:false,
+  ndbi_2022:false,ndbi_2024:false,
+  nir_2022:false, nir_2024:false,
+  depth_2022:false,depth_2024:false,
+  rgb_2022:false,cir_2022:false,rgb_2024:false,cir_2024:false,
 };
-
-// Opacity per layer
 const L_OPA = {
-  construction:.72, segments:.50, bt2022:.80,
-  ndvi_2022:.75, ndvi_2024:.75, nir_2022:.75, nir_2024:.75,
-  depth_2022:.75, depth_2024:.75,
+  construction:.72,segments:.50,bt2022:.80,
+  ndvi_2022:.75,ndvi_2024:.75,
+  ndbi_2022:.75,ndbi_2024:.75,
+  nir_2022:.75, nir_2024:.75,
+  depth_2022:.75,depth_2024:.75,
+  rgb_2022:1,cir_2022:1,rgb_2024:1,cir_2024:1,
 };
+const BASE_KEYS = ['rgb_2022','cir_2022','rgb_2024','cir_2024'];
+let currentBase = 'pdok';
 
-// Current active base imagery key
-let activeBase = 'pdok';
-
-// Tile bounds (expanded) — used for placing image overlays
-let tileBounds = null;
-
-// ── Base imagery switch ───────────────────────────────────────────────────────
-function setBase(key) {
-  // Remove live PDOK tile
-  if (map.hasLayer(WMS_PDOK)) map.removeLayer(WMS_PDOK);
-  // Remove all analysis imagery overlays
-  ['rgb_2022','cir_2022','rgb_2024','cir_2024'].forEach(k => {
-    if (L_OBJ[k] && map.hasLayer(L_OBJ[k])) map.removeLayer(L_OBJ[k]);
-  });
-
-  activeBase = key;
-  const LABELS = { pdok:'Live PDOK', rgb_2022:'RGB 2022', cir_2022:'CIR 2022',
-                   rgb_2024:'RGB 2024', cir_2024:'CIR 2024' };
-  document.getElementById('badge-layer').textContent = '📡 ' + (LABELS[key]||key);
-
-  if (key === 'pdok') {
-    WMS_PDOK.addTo(map);
-    return;
-  }
-  if (L_OBJ[key]) {
-    L_OBJ[key].addTo(map);
-  } else {
-    // Data not yet available — fall back to PDOK
-    WMS_PDOK.addTo(map);
-    document.querySelector(`input[value="pdok"]`).checked = true;
-    document.getElementById('badge-layer').textContent = '📡 Live PDOK';
-    activeBase = 'pdok';
-    setStatus('Run analysis first to unlock this imagery.','error');
-  }
-}
-
-// ── Toggle overlay / analysis layer ──────────────────────────────────────────
 function toggleLayer(key) {
-  if (!(key in L_VIS)) return;
   L_VIS[key] = !L_VIS[key];
-
-  // Update sidebar row toggle state
-  const rowId = 'lr-' + key.replace(/_/g,'-');
-  const row   = document.getElementById(rowId);
-  if (row) row.classList.toggle('off', !L_VIS[key]);
-
-  // Update BT2022 pill
-  if (key === 'bt2022') {
-    document.getElementById('bt2022-pill').classList.toggle('off', !L_VIS.bt2022);
-  }
-
-  // Apply to map
-  const layer = L_OBJ[key];
-  if (!layer) return;
-  if (L_VIS[key]) layer.addTo(map);
-  else            map.removeLayer(layer);
-
-  _updateGradLegend();
+  applyLayerVis(key);
+  updateEyeBtn(key);
+  updateGradLegends();
 }
-
 function setLayerOpacity(key, val) {
   L_OPA[key] = parseFloat(val);
-  const pct  = Math.round(L_OPA[key]*100) + '%';
-  const el   = document.getElementById('lo-' + key.replace(/_/g,'-'));
-  if (el) el.textContent = pct;
-  if (L_OBJ[key]?.setOpacity) L_OBJ[key].setOpacity(L_OPA[key]);
-  else if (L_OBJ[key]?.setStyle) {
-    // GeoJSON layer — update fillOpacity
-    L_OBJ[key].setStyle(f => {
-      const isC = f.properties?.terrain_label === 'likely construction terrain';
-      return { fillOpacity: L_OPA[key], weight: isC ? 2 : 0.8 };
-    });
-  }
+  const el = document.getElementById('lo-'+key.replace(/_/g,'-'));
+  if (el) el.textContent = Math.round(val*100)+'%';
+  if (L_OBJ[key] && L_VIS[key]) L_OBJ[key].setOpacity(L_OPA[key]);
+}
+function applyLayerVis(key) {
+  if (!L_OBJ[key]) return;
+  if (L_VIS[key]) { if (!map.hasLayer(L_OBJ[key])) map.addLayer(L_OBJ[key]); L_OBJ[key].setOpacity(L_OPA[key]); }
+  else { if (map.hasLayer(L_OBJ[key])) map.removeLayer(L_OBJ[key]); }
+}
+function updateEyeBtn(key) {
+  const row = document.getElementById('lr-'+key.replace(/_/g,'-'));
+  if (!row) return;
+  const btn = row.querySelector('.leye');
+  if (btn) btn.style.opacity = L_VIS[key] ? '1' : '0.35';
+}
+function setBase(key) {
+  BASE_KEYS.forEach(k => { if (L_OBJ[k] && map.hasLayer(L_OBJ[k])) map.removeLayer(L_OBJ[k]); });
+  if (key === 'pdok') { if (!map.hasLayer(PDOK_LAYER)) map.addLayer(PDOK_LAYER); currentBase='pdok'; return; }
+  if (map.hasLayer(PDOK_LAYER)) map.removeLayer(PDOK_LAYER);
+  currentBase = key;
+  if (L_OBJ[key]) { map.addLayer(L_OBJ[key]); L_OBJ[key].setOpacity(1); }
+}
+function markReady(key) {
+  const row = document.getElementById('lr-'+key.replace(/_/g,'-'));
+  if (row) row.setAttribute('data-ready','true');
+  const brad = document.getElementById('br-'+key.replace(/_/g,'-'));
+  if (brad) brad.classList.remove('opacity-40','pointer-events-none');
+}
+function updateGradLegends() {
+  document.getElementById('gp-ndvi').style.display  = (L_VIS.ndvi_2022||L_VIS.ndvi_2024)   ?'':'none';
+  document.getElementById('gp-ndbi').style.display  = (L_VIS.ndbi_2022||L_VIS.ndbi_2024)   ?'':'none';
+  document.getElementById('gp-nir').style.display   = (L_VIS.nir_2022 ||L_VIS.nir_2024)    ?'':'none';
+  document.getElementById('gp-depth').style.display = (L_VIS.depth_2022||L_VIS.depth_2024) ?'':'none';
 }
 
-function _updateGradLegend() {
-  const showNdvi  = L_VIS.ndvi_2022  || L_VIS.ndvi_2024;
-  const showNir   = L_VIS.nir_2022   || L_VIS.nir_2024;
-  const showDepth = L_VIS.depth_2022 || L_VIS.depth_2024;
-  document.getElementById('gp-ndvi').style.display  = showNdvi  ? 'block':'none';
-  document.getElementById('gp-nir').style.display   = showNir   ? 'block':'none';
-  document.getElementById('gp-depth').style.display = showDepth ? 'block':'none';
-  document.getElementById('grad-wrap').style.display =
-    (showNdvi||showNir||showDepth) ? 'flex':'none';
-}
+// ── Draw & Analyze ────────────────────────────────────────────────────────────
+function startDraw() { new L.Draw.Rectangle(map, drawControl.options.draw.rectangle).enable(); }
 
-// ── BT2022 reference layer ────────────────────────────────────────────────────
-async function loadBT2022() {
+async function runAnalyze() {
+  if (!drawnBbox) { alert('Draw a bounding box first.'); return; }
+  const btn = document.getElementById('btn-analyze');
+  const msg = document.getElementById('progress-msg');
+  btn.disabled = true; btn.textContent = '⏳ Analyzing…';
+  msg.textContent = 'Fetching imagery + running SAM2 + CLIP…';
+  msg.classList.remove('hidden');
+  const sw = drawnBbox.getSouthWest(), ne = drawnBbox.getNorthEast();
   try {
-    const data = await fetch('/api/bt2022').then(r=>r.json());
-    if (!data.features?.length) {
-      document.getElementById('bt2022-pill').textContent = '⚠ BT2022 not found';
-      return;
-    }
-    L_OBJ.bt2022 = L.geoJSON(data, {
-      style:{ color:'#f0883e', weight:1.5, fillColor:'#f0883e',
-              fillOpacity:0.07, dashArray:'5,4' },
-      onEachFeature(f,layer){
-        const p = f.properties||{};
-        layer.bindTooltip(
-          `🟠 2022 site<br><span style="color:#888;font-size:10px">${p.identificatie||''}</span>`,
-          {sticky:true,opacity:.9}
-        );
-        layer.on('mouseover',()=>layer.setStyle({fillOpacity:.30,weight:2.5}));
-        layer.on('mouseout', ()=>layer.resetStyle());
-      }
+    const resp = await fetch('/api/analyze-bbox', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({bbox_wgs84:[sw.lng,sw.lat,ne.lng,ne.lat]}),
     });
-    if (L_VIS.bt2022) L_OBJ.bt2022.addTo(map);
-    // Mark the sidebar row as ready
-    const row = document.getElementById('lr-bt2022');
-    if (row) row.setAttribute('data-ready','true');
-    document.getElementById('bt2022-pill').textContent =
-      `🟠 2022 sites (${data.features.length.toLocaleString()})`;
-  } catch(e) {
-    console.warn('BT2022:',e);
-    document.getElementById('bt2022-pill').textContent = '⚠ BT2022 unavailable';
-  }
-}
-loadBT2022();
-
-// ── Draw bbox ─────────────────────────────────────────────────────────────────
-const drawnItems = new L.FeatureGroup().addTo(map);
-let currentBbox = null, drawHandler = null;
-
-function startDraw() {
-  if (drawHandler){ drawHandler.disable(); drawHandler=null; }
-  drawHandler = new L.Draw.Rectangle(map,{
-    shapeOptions:{color:'#58a6ff',weight:2,fillOpacity:.06}
-  });
-  drawHandler.enable();
-  setHint('🖱 Drag a rectangle on the map…','accent');
-}
-map.on(L.Draw.Event.CREATED, e => {
-  drawnItems.clearLayers();
-  drawnItems.addLayer(e.layer);
-  drawHandler = null;
-  const b = e.layer.getBounds();
-  currentBbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
-  setHint('✓ Area ready — press Analyze','green');
-  document.getElementById('run-label').textContent = '▶ Analyze Area';
-  document.getElementById('run-btn').disabled = false;
-});
-
-function setHint(msg, col='') {
-  const el = document.getElementById('draw-hint');
-  el.textContent = msg;
-  el.style.color = col==='accent'?'var(--accent)':col==='green'?'var(--green)':'var(--muted)';
-}
-
-// ── Run analysis ──────────────────────────────────────────────────────────────
-async function runAnalysis() {
-  if (!currentBbox){ setStatus('Draw an area first.','error'); return; }
-  const btn = document.getElementById('run-btn');
-  btn.classList.add('loading');
-  document.getElementById('run-label').textContent = 'Analysing…';
-
-  // Clear old result layers from map
-  const resultKeys = ['construction','segments','ndvi_2022','ndvi_2024',
-                      'nir_2022','nir_2024','depth_2022','depth_2024',
-                      'rgb_2022','cir_2022','rgb_2024','cir_2024'];
-  resultKeys.forEach(k => {
-    if (L_OBJ[k] && map.hasLayer(L_OBJ[k])) map.removeLayer(L_OBJ[k]);
-    L_OBJ[k] = null;
-  });
-  // Disable imagery radio buttons until data arrives
-  ['rgb_2022','cir_2022','rgb_2024','cir_2024'].forEach(k => {
-    const br = document.getElementById('br-'+k.replace(/_/g,'-'));
-    if (br) br.setAttribute('data-ready','false');
-  });
-
-  try {
-    setStatus('Fetching 2022+2024 RGB/CIR → NDVI → Depth → SAM2 → CLIP…');
-    const data = await apiPost('/api/analyze-bbox', { bbox_wgs84: currentBbox });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
     renderResults(data);
-    setStatus(`✓ ${data.stats.construction} construction  /  ${data.stats.total} total segments`,'ok');
+    msg.textContent = `✓ Done — ${data.stats.total} segments · ${data.stats.construction} construction`;
   } catch(e) {
-    setStatus('Error: '+e.message,'error');
+    msg.textContent = '✗ Error: '+e.message;
   } finally {
-    btn.classList.remove('loading');
-    document.getElementById('run-label').textContent = '▶ Analyze Area';
+    btn.disabled = false; btn.textContent = '▶ Analyze Area';
   }
-}
-
-async function apiPost(url, body) {
-  const r = await fetch(url,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body),
-  });
-  if (!r.ok){
-    const e = await r.json().catch(()=>({detail:r.statusText}));
-    throw new Error(e.detail||r.statusText);
-  }
-  return r.json();
 }
 
 // ── Render results ────────────────────────────────────────────────────────────
 function renderResults(data) {
-  const drawBounds = L.latLngBounds(data.bounds[0],      data.bounds[1]);      // original drawn bbox
-  const tileLL     = L.latLngBounds(data.tile_bounds[0], data.tile_bounds[1]); // expanded tile bbox
+  const drawBounds = L.latLngBounds(data.bounds[0],      data.bounds[1]);
+  const tileLL     = L.latLngBounds(data.tile_bounds[0], data.tile_bounds[1]);
+  const ovs = data.overlays;
 
-  const ovs = data.overlays || {};
-
-  // 1. Base imagery overlays — placed at TILE bounds (covers the fetched area correctly)
-  const imgKeys = ['rgb_2022','cir_2022','rgb_2024','cir_2024'];
-  imgKeys.forEach(key => {
-    if (!ovs[key]) return;
-    L_OBJ[key] = L.imageOverlay(ovs[key], tileLL, { opacity:1, zIndex:200 });
-    const brId = 'br-'+key.replace(/_/g,'-');
-    const br   = document.getElementById(brId);
-    if (br) br.setAttribute('data-ready','true');
+  // Clear old
+  Object.keys(L_OBJ).forEach(k => {
+    if (L_OBJ[k]) { if (map.hasLayer(L_OBJ[k])) map.removeLayer(L_OBJ[k]); L_OBJ[k]=null; }
   });
 
-  // 2. Derived overlays — also placed at TILE bounds
-  const ovKeys = ['ndvi_2022','ndvi_2024','nir_2022','nir_2024','depth_2022','depth_2024'];
-  ovKeys.forEach(key => {
+  // Image base overlays — at TILE bounds
+  ['rgb_2022','cir_2022','rgb_2024','cir_2024'].forEach(key => {
     if (!ovs[key]) return;
-    L_OBJ[key] = L.imageOverlay(ovs[key], tileLL, { opacity:L_OPA[key], zIndex:300 });
-    const rowId = 'lr-'+key.replace(/_/g,'-');
-    const row   = document.getElementById(rowId);
-    if (row) row.setAttribute('data-ready','true');
-    // Apply visibility state
-    if (L_VIS[key]) L_OBJ[key].addTo(map);
+    L_OBJ[key] = L.imageOverlay(ovs[key], tileLL, {opacity:1,zIndex:200,interactive:false});
+    markReady(key);
   });
 
-  // 3. Segment GeoJSON layers — placed at correct WGS84 coords (already clipped to drawn bbox)
-  const features = data.segments?.features || [];
-  if (features.length) {
-    // All segments layer
-    L_OBJ.segments = L.geoJSON(
-      {type:'FeatureCollection',features},
-      {style: f => segStyle(f, L_OPA.segments, false), onEachFeature: addPopup}
+  // Derived overlays — also at TILE bounds
+  ['ndvi_2022','ndvi_2024','ndbi_2022','ndbi_2024','nir_2022','nir_2024','depth_2022','depth_2024'].forEach(key => {
+    if (!ovs[key]) return;
+    L_OBJ[key] = L.imageOverlay(ovs[key], tileLL, {opacity:L_OPA[key],zIndex:300,interactive:false});
+    markReady(key);
+    if (L_VIS[key]) map.addLayer(L_OBJ[key]);
+  });
+
+  // Restore previously-selected base if it was an image overlay
+  if (currentBase !== 'pdok' && L_OBJ[currentBase]) {
+    if (map.hasLayer(PDOK_LAYER)) map.removeLayer(PDOK_LAYER);
+    map.addLayer(L_OBJ[currentBase]);
+    L_OBJ[currentBase].setOpacity(1);
+  }
+
+  // SAM segments GeoJSON
+  L_OBJ['segments'] = L.geoJSON(data.segments, {
+    style: f => ({fillColor:f.properties.color,fillOpacity:.45,color:f.properties.color,weight:1.2,opacity:.85}),
+    onEachFeature: (f, layer) => {
+      layer.on('click', () => {
+        const p   = f.properties;
+        const pct = Math.round(p.construction_score*100);
+        const dlt = p.ndvi_delta != null
+          ? (p.ndvi_delta>0.01 ? `▼${p.ndvi_delta.toFixed(2)} loss`
+            :p.ndvi_delta<-0.01?`▲${Math.abs(p.ndvi_delta).toFixed(2)} gain`:'≈ stable')
+          : '—';
+        layer.bindPopup(`<div class="seg-popup">
+          <div class="ptitle" style="color:${p.color}">● ${p.terrain_label}</div>
+          <div style="font-size:11px;color:#666;margin-bottom:3px">Construction score: ${pct}%</div>
+          <div class="pbar-bg"><div class="pbar-fg" style="width:${pct}%;background:${p.color}"></div></div>
+          <div class="pgrid">
+            <span class="plabel">NDVI 2022</span><span class="pval">${p.mean_ndvi_2022??'—'}</span>
+            <span class="plabel">NDVI 2024</span><span class="pval">${p.mean_ndvi_2024??'—'}</span>
+            <span class="plabel">ΔNDVI</span><span class="pval">${dlt}</span>
+            <span class="plabel">NDBI 2024</span><span class="pval">${p.mean_ndbi_2024??'—'}</span>
+            <span class="plabel">Depth mean</span><span class="pval">${p.depth_mean??'—'}</span>
+            <span class="plabel">Roughness</span><span class="pval">${p.depth_roughness??'—'}</span>
+            <span class="plabel">Area</span><span class="pval">${p.area_px.toLocaleString()} px</span>
+            <span class="plabel">SAM IoU</span><span class="pval">${Math.round(p.predicted_iou*100)}%</span>
+          </div>
+          ${p.top3_clip?`<div style="margin-top:5px;font-size:10px;color:#777;font-weight:600">TOP CLIP MATCHES</div>
+          ${p.top3_clip.map((c,i)=>`<div class="pclip">${i===0?'▶':'·'} <b>${c.label}</b> ${Math.round(c.score*100)}%</div>`).join('')}`:''}
+        </div>`).openPopup();
+      });
+    },
+  });
+  markReady('segments');
+  if (L_VIS['segments']) map.addLayer(L_OBJ['segments']);
+
+  // Construction-only highlight
+  const cf = data.segments.features.filter(f=>f.properties.terrain_label==='likely construction terrain');
+  if (cf.length) {
+    L_OBJ['construction'] = L.geoJSON(
+      {type:'FeatureCollection',features:cf},
+      {style:{fillColor:'#FF4500',fillOpacity:.70,color:'#FF4500',weight:2.5,opacity:1}}
     );
-    document.getElementById('lr-segments').setAttribute('data-ready','true');
-    if (L_VIS.segments) L_OBJ.segments.addTo(map);
-
-    // Construction-only layer (on top)
-    const constr = features.filter(f=>f.properties.terrain_label==='likely construction terrain');
-    if (constr.length) {
-      L_OBJ.construction = L.geoJSON(
-        {type:'FeatureCollection',features:constr},
-        {style: f => segStyle(f, L_OPA.construction, true), onEachFeature: addPopup}
-      );
-      document.getElementById('lr-construction').setAttribute('data-ready','true');
-      if (L_VIS.construction) L_OBJ.construction.addTo(map);
-    }
-  } else {
-    setStatus(`⚠ 0 segments returned — try drawing a larger area (>200 m)`, 'error');
+    markReady('construction');
+    if (L_VIS['construction']) map.addLayer(L_OBJ['construction']);
   }
 
-  // 4. Fit map to the DRAWN bbox (not the tile)
-  map.fitBounds(drawBounds, { padding:[20,20] });
+  // Fit to DRAWN bbox (not expanded tile)
+  map.fitBounds(drawBounds, {padding:[20,20]});
 
-  // 5. Switch base imagery to rgb_2024 if available
-  if (L_OBJ.rgb_2024) {
-    document.querySelector('input[value="rgb_2024"]').checked = true;
-    setBase('rgb_2024');
-  }
+  Object.keys(L_VIS).forEach(updateEyeBtn);
+  updateGradLegends();
 
-  // 6. Stats
-  const lc = data.stats.labels || {};
-  document.getElementById('stat-constr').textContent = data.stats.construction;
-  document.getElementById('stat-total').textContent  = data.stats.total;
-  document.getElementById('label-list').innerHTML =
-    Object.entries(lc).sort((a,b)=>b[1]-a[1]).map(([lbl,n])=>{
-      const col = TERRAIN_COLORS[lbl]||'#888';
-      return `<div class="llrow">
-        <span class="lldot" style="background:${col}"></span>
-        <span class="llname" title="${lbl}">${lbl}</span>
-        <span class="llcnt">${n}</span>
-      </div>`;
-    }).join('');
-  document.getElementById('results-sec').style.display = 'block';
-  _updateGradLegend();
+  // Stats
+  document.getElementById('stats-panel').classList.remove('hidden');
+  const labs = data.stats.labels || {};
+  document.getElementById('stats-content').innerHTML =
+    `<div class="flex justify-between"><span class="text-gray-400">Total segments</span><span class="font-semibold text-white">${data.stats.total}</span></div>
+     <div class="flex justify-between"><span class="text-orange-400">Construction sites</span><span class="font-semibold text-orange-400">${data.stats.construction}</span></div>`+
+    Object.entries(labs).map(([l,n])=>
+      `<div class="flex justify-between"><span class="text-gray-500">${l}</span><span class="text-gray-300">${n}</span></div>`
+    ).join('');
 }
 
-// ── Segment styling ───────────────────────────────────────────────────────────
-function segStyle(f, fillOpacity, emphasis) {
-  const p   = f.properties;
-  const col = p.color || TERRAIN_COLORS[p.terrain_label] || '#888';
-  const isC = p.terrain_label === 'likely construction terrain';
-  if (emphasis) {
-    return { color:col, weight:2.5, fillColor:col, fillOpacity };
-  }
-  return {
-    color:       col,
-    weight:      isC ? 1.8 : 0.7,
-    fillColor:   col,
-    fillOpacity: fillOpacity,
-    dashArray:   isC ? null : '3,3',
-  };
-}
-
-// ── Segment popup ─────────────────────────────────────────────────────────────
-function addPopup(f, layer) {
-  const p   = f.properties;
-  const col = p.color || TERRAIN_COLORS[p.terrain_label] || '#888';
-  const pct = Math.round((p.construction_score||0)*100);
-
-  const ndvi22 = p.mean_ndvi_2022!=null
-    ? `<tr><td>NDVI 2022</td><td>${p.mean_ndvi_2022.toFixed(3)} ${ndviTag(p.mean_ndvi_2022)}</td></tr>`:'';
-  const ndvi24 = p.mean_ndvi_2024!=null
-    ? `<tr><td>NDVI 2024</td><td>${p.mean_ndvi_2024.toFixed(3)} ${ndviTag(p.mean_ndvi_2024)}</td></tr>`:'';
-  const dM = p.depth_mean!=null
-    ? `<tr><td>Depth mean</td><td>${p.depth_mean.toFixed(3)}</td></tr>`:'';
-  const dR = p.depth_roughness!=null
-    ? `<tr><td>Roughness</td><td>${p.depth_roughness.toFixed(1)} ${p.depth_roughness>5?'▲ rough':'▽ flat'}</td></tr>`:'';
-  const clips = (p.top3_clip||[]).map((t,i)=>
-    `<div class="clip-row">${i===0?'▶':'·'} ${t.label.split(' ').slice(0,5).join(' ')} <span>${(t.score*100).toFixed(0)}%</span></div>`
-  ).join('');
-
-  layer.bindPopup(`
-    <div class="spop">
-      <div class="spop-hdr">
-        <span class="spop-dot" style="background:${col}"></span>
-        <span class="spop-lbl" style="color:${col}">${p.terrain_label}</span>
-      </div>
-      <div style="font-size:11px;color:#8b949e;margin-bottom:3px">
-        Construction score <b style="color:#FF4500">${pct}%</b>
-      </div>
-      <div class="score-bar"><div class="score-pin" style="left:${pct}%"></div></div>
-      <table>${ndvi22}${ndvi24}
-        <tr class="sdiv"><td colspan=2></td></tr>
-        ${dM}${dR}
-        <tr><td>Area</td><td>${(p.area_px||0).toLocaleString()} px</td></tr>
-        <tr><td>SAM IoU</td><td>${((p.predicted_iou||0)*100).toFixed(0)}%</td></tr>
-      </table>
-      ${clips?`<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:5px;
-        font-size:10px;color:#8b949e;font-weight:600;margin-bottom:3px">CLIP</div>${clips}`:''}
-    </div>`);
-
-  layer.on('mouseover',()=>layer.setStyle({fillOpacity:.90,weight:2.5}));
-  layer.on('mouseout', ()=>layer.resetStyle());
-}
-
-function ndviTag(v){
-  if(v<0.05) return '<span style="color:#f85149">●bare</span>';
-  if(v<0.30) return '<span style="color:#e3b341">●mixed</span>';
-  return '<span style="color:#3fb950">●veg</span>';
-}
+// ── BT2022 reference ──────────────────────────────────────────────────────────
+fetch('/api/bt2022').then(r=>r.json()).then(gj=>{
+  if (!gj.features||!gj.features.length) return;
+  L_OBJ['bt2022'] = L.geoJSON(gj, {
+    style:{fillColor:'#FFA500',fillOpacity:.08,color:'#FFA500',weight:1.5,dashArray:'4 4',opacity:.8},
+    onEachFeature:(f,layer)=>layer.bindPopup(`<b>BT2022</b><br>${f.properties.naam||''}`),
+  });
+  markReady('bt2022');
+  if (L_VIS['bt2022']) map.addLayer(L_OBJ['bt2022']);
+  updateEyeBtn('bt2022');
+}).catch(()=>{});
 
 // ── Download ──────────────────────────────────────────────────────────────────
-function downloadGPKG(){ window.location.href='/api/download/results.gpkg'; }
+function downloadGpkg() { window.open('/api/download/results.gpkg','_blank'); }
 
-// ── Status ────────────────────────────────────────────────────────────────────
-function setStatus(msg, type=''){
-  const el=document.getElementById('status-bar');
-  el.textContent=msg; el.className=type;
-}
-
-// ── Health poll ───────────────────────────────────────────────────────────────
-async function checkHealth(){
-  try{
-    const d = await fetch('/api/health').then(r=>r.json());
-    if(d.ready){
-      setStatus(`Models ready · ${d.device} · SAM2 + CLIP + Depth`,'ok');
-      clearInterval(healthTimer);
-    } else {
-      setStatus('Loading models… (~60–90 s on first start)');
-    }
-  } catch { setStatus('Connecting to server…'); }
-}
-const healthTimer = setInterval(checkHealth, 3000);
-checkHealth();
+// ── Health polling ────────────────────────────────────────────────────────────
+(function poll() {
+  fetch('/api/health').then(r=>r.json()).then(h=>{
+    const bar = document.getElementById('status-bar');
+    if (h.ready) { bar.textContent=`✓ Models ready · ${h.device}`; bar.style.color='#4ade80'; }
+    else { bar.textContent='⏳ Models loading…'; setTimeout(poll,4000); }
+  }).catch(()=>setTimeout(poll,5000));
+})();
 </script>
 </body>
 </html>
