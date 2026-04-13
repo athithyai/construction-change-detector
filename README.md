@@ -1,10 +1,9 @@
 ---
 title: SamSpade
-emoji: ⬡
-colorFrom: orange
-colorTo: red
+emoji: 🏗
+colorFrom: red
+colorTo: yellow
 sdk: docker
-app_port: 7860
 pinned: false
 ---
 
