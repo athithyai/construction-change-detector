@@ -1,8 +1,11 @@
 # Data (large / proprietary)
 data/tiles/
+data/tiles_test/
 data/tile_cache/
 data/raw/*
 !data/raw/BT2022.gpkg
+data/*.tif
+data/*.png
 
 # Model weights & outputs
 checkpoints/*
