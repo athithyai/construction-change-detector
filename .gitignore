@@ -1,9 +1,12 @@
 # Data (large / proprietary)
 data/tiles/
-data/raw/
+data/tile_cache/
+data/raw/*
+!data/raw/BT2022.gpkg
 
 # Model weights & outputs
-checkpoints/
+checkpoints/*
+!checkpoints/segment_classifier.pkl
 outputs/
 logs/
 
